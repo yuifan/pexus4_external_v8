@@ -42,13 +42,31 @@ assertEquals(0x12, parseInt('0x12'));
 assertEquals(0x12, parseInt('0x12', 16));
 assertEquals(0x12, parseInt('0x12', 16.1));
 assertEquals(0x12, parseInt('0x12', NaN));
-
+assertTrue(isNaN(parseInt('0x  ')));
+assertTrue(isNaN(parseInt('0x')));
+assertTrue(isNaN(parseInt('0x  ', 16)));
+assertTrue(isNaN(parseInt('0x', 16)));
 assertEquals(12, parseInt('12aaa'));
 
 assertEquals(0.1, parseFloat('0.1'));
 assertEquals(0.1, parseFloat('0.1aaa'));
+assertEquals(0, parseFloat('0aaa'));
 assertEquals(0, parseFloat('0x12'));
 assertEquals(77, parseFloat('077'));
+
+assertEquals(Infinity, parseInt('1000000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '0000000000000'));
+
+assertEquals(Infinity, parseInt('0x10000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '000000000000000000000000000000000000000000000000000000000000000000000000'
+    + '0000000000000'));
 
 
 var i;
@@ -82,4 +100,17 @@ assertTrue(isNaN(parseFloat(0/0)));
 assertEquals(Infinity, parseFloat(1/0), "parseFloat Infinity");
 assertEquals(-Infinity, parseFloat(-1/0), "parseFloat -Infinity");
 
+var state;
+var throwingRadix = { valueOf: function() { state = "throwingRadix"; throw null; } };
+var throwingString = { toString: function() { state = "throwingString"; throw null; } };
+state = null;
+try { parseInt('123', throwingRadix); } catch (e) {}
+assertEquals(state, "throwingRadix");
 
+state = null;
+try { parseInt(throwingString, 10); } catch (e) {}
+assertEquals(state, "throwingString");
+
+state = null;
+try { parseInt(throwingString, throwingRadix); } catch (e) {}
+assertEquals(state, "throwingString");

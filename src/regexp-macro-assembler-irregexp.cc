@@ -36,7 +36,7 @@
 namespace v8 {
 namespace internal {
 
-#ifndef V8_NATIVE_REGEXP
+#ifdef V8_INTERPRETED_REGEXP
 
 RegExpMacroAssemblerIrregexp::RegExpMacroAssemblerIrregexp(Vector<byte> buffer)
     : buffer_(buffer),
@@ -142,6 +142,12 @@ void RegExpMacroAssemblerIrregexp::ReadStackPointerFromRegister(
   ASSERT(register_index >= 0);
   ASSERT(register_index <= kMaxRegister);
   Emit(BC_SET_SP_TO_REGISTER, register_index);
+}
+
+
+void RegExpMacroAssemblerIrregexp::SetCurrentPositionFromEnd(int by) {
+  ASSERT(is_uint24(by));
+  Emit(BC_SET_CURRENT_POSITION_FROM_END, by);
 }
 
 
@@ -429,10 +435,11 @@ void RegExpMacroAssemblerIrregexp::IfRegisterEqPos(int register_index,
 }
 
 
-Handle<Object> RegExpMacroAssemblerIrregexp::GetCode(Handle<String> source) {
+Handle<HeapObject> RegExpMacroAssemblerIrregexp::GetCode(
+    Handle<String> source) {
   Bind(&backtrack_);
   Emit(BC_POP_BT, 0);
-  Handle<ByteArray> array = Factory::NewByteArray(length());
+  Handle<ByteArray> array = FACTORY->NewByteArray(length());
   Copy(array->GetDataStartAddress());
   return array;
 }
@@ -459,6 +466,6 @@ void RegExpMacroAssemblerIrregexp::Expand() {
   }
 }
 
-#endif  // !V8_NATIVE_REGEXP
+#endif  // V8_INTERPRETED_REGEXP
 
 } }  // namespace v8::internal

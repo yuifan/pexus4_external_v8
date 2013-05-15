@@ -31,7 +31,7 @@
 #include "v8.h"
 
 #include "platform.h"
-#include "smart-pointer.h"
+#include "smart-array-pointer.h"
 #include "string-stream.h"
 
 
@@ -193,7 +193,7 @@ static const char* Type2String(Flag::FlagType type) {
 }
 
 
-static SmartPointer<const char> ToString(Flag* flag) {
+static SmartArrayPointer<const char> ToString(Flag* flag) {
   HeapStringAllocator string_allocator;
   StringStream buffer(&string_allocator);
   switch (flag->type()) {
@@ -279,7 +279,7 @@ static void SplitArgument(const char* arg,
   *value = NULL;
   *is_bool = false;
 
-  if (*arg == '-') {
+  if (arg != NULL && *arg == '-') {
     // find the begin of the flag name
     arg++;  // remove 1st '-'
     if (*arg == '-') {
@@ -411,7 +411,7 @@ int FlagList::SetFlagsFromCommandLine(int* argc,
           for (int k = i; k < *argc; k++) {
             js_argv[k - start_pos] = StrDup(argv[k]);
           }
-          *flag->args_variable() = JSArguments(js_argc, js_argv);
+          *flag->args_variable() = JSArguments::Create(js_argc, js_argv);
           i = *argc;  // Consume all arguments
           break;
         }
@@ -470,12 +470,12 @@ static char* SkipBlackSpace(char* p) {
 // static
 int FlagList::SetFlagsFromString(const char* str, int len) {
   // make a 0-terminated copy of str
-  char* copy0 = NewArray<char>(len + 1);
-  memcpy(copy0, str, len);
+  ScopedVector<char> copy0(len + 1);
+  memcpy(copy0.start(), str, len);
   copy0[len] = '\0';
 
   // strip leading white space
-  char* copy = SkipWhiteSpace(copy0);
+  char* copy = SkipWhiteSpace(copy0.start());
 
   // count the number of 'arguments'
   int argc = 1;  // be compatible with SetFlagsFromCommandLine()
@@ -485,7 +485,7 @@ int FlagList::SetFlagsFromString(const char* str, int len) {
   }
 
   // allocate argument array
-  char** argv = NewArray<char*>(argc);
+  ScopedVector<char*> argv(argc);
 
   // split the flags string into arguments
   argc = 1;  // be compatible with SetFlagsFromCommandLine()
@@ -497,11 +497,7 @@ int FlagList::SetFlagsFromString(const char* str, int len) {
   }
 
   // set the flags
-  int result = SetFlagsFromCommandLine(&argc, argv, false);
-
-  // cleanup
-  DeleteArray(argv);
-  DeleteArray(copy0);
+  int result = SetFlagsFromCommandLine(&argc, argv.start(), false);
 
   return result;
 }
@@ -532,24 +528,16 @@ void FlagList::PrintHelp() {
   printf("Options:\n");
   for (size_t i = 0; i < num_flags; ++i) {
     Flag* f = &flags[i];
-    SmartPointer<const char> value = ToString(f);
+    SmartArrayPointer<const char> value = ToString(f);
     printf("  --%s (%s)\n        type: %s  default: %s\n",
            f->name(), f->comment(), Type2String(f->type()), *value);
   }
 }
 
-JSArguments::JSArguments()
-    : argc_(0), argv_(NULL) {}
-JSArguments::JSArguments(int argc, const char** argv)
-    : argc_(argc), argv_(argv) {}
-int JSArguments::argc() const { return argc_; }
-const char** JSArguments::argv() { return argv_; }
-const char*& JSArguments::operator[](int idx) { return argv_[idx]; }
-JSArguments& JSArguments::operator=(JSArguments args) {
-    argc_ = args.argc_;
-    argv_ = args.argv_;
-    return *this;
-}
 
+void FlagList::EnforceFlagImplications() {
+#define FLAG_MODE_DEFINE_IMPLICATIONS
+#include "flag-definitions.h"
+}
 
 } }  // namespace v8::internal

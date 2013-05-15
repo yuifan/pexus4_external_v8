@@ -1,4 +1,4 @@
-// Copyright 2008 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -25,6 +25,7 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+#ifdef ENABLE_DEBUGGER_SUPPORT
 
 #include "d8.h"
 #include "d8-debug.h"
@@ -33,6 +34,20 @@
 
 
 namespace v8 {
+
+static bool was_running = true;
+
+void PrintPrompt(bool is_running) {
+  const char* prompt = is_running? "> " : "dbg> ";
+  was_running = is_running;
+  printf("%s", prompt);
+  fflush(stdout);
+}
+
+
+void PrintPrompt() {
+  PrintPrompt(was_running);
+}
 
 
 void HandleDebugEvent(DebugEvent event,
@@ -86,7 +101,7 @@ void HandleDebugEvent(DebugEvent event,
   bool running = false;
   while (!running) {
     char command[kBufferSize];
-    printf("dbg> ");
+    PrintPrompt(running);
     char* str = fgets(command, kBufferSize, stdin);
     if (str == NULL) break;
 
@@ -154,7 +169,7 @@ void RemoteDebugger::Run() {
   bool ok;
 
   // Make sure that socket support is initialized.
-  ok = i::Socket::Setup();
+  ok = i::Socket::SetUp();
   if (!ok) {
     printf("Unable to initialize socket support %d\n", i::Socket::LastError());
     return;
@@ -178,6 +193,7 @@ void RemoteDebugger::Run() {
   // Start the keyboard thread.
   KeyboardThread keyboard(this);
   keyboard.Start();
+  PrintPrompt();
 
   // Process events received from debugged VM and from the keyboard.
   bool terminate = false;
@@ -206,14 +222,14 @@ void RemoteDebugger::Run() {
 }
 
 
-void RemoteDebugger::MessageReceived(i::SmartPointer<char> message) {
+void RemoteDebugger::MessageReceived(i::SmartArrayPointer<char> message) {
   RemoteDebuggerEvent* event =
       new RemoteDebuggerEvent(RemoteDebuggerEvent::kMessage, message);
   AddEvent(event);
 }
 
 
-void RemoteDebugger::KeyboardCommand(i::SmartPointer<char> command) {
+void RemoteDebugger::KeyboardCommand(i::SmartArrayPointer<char> command) {
   RemoteDebuggerEvent* event =
       new RemoteDebuggerEvent(RemoteDebuggerEvent::kKeyboard, command);
   AddEvent(event);
@@ -223,7 +239,7 @@ void RemoteDebugger::KeyboardCommand(i::SmartPointer<char> command) {
 void RemoteDebugger::ConnectionClosed() {
   RemoteDebuggerEvent* event =
       new RemoteDebuggerEvent(RemoteDebuggerEvent::kDisconnect,
-                              i::SmartPointer<char>());
+                              i::SmartArrayPointer<char>());
   AddEvent(event);
 }
 
@@ -257,6 +273,7 @@ RemoteDebuggerEvent* RemoteDebugger::GetEvent() {
 
 
 void RemoteDebugger::HandleMessageReceived(char* message) {
+  Locker lock;
   HandleScope scope;
 
   // Print the event details.
@@ -264,7 +281,8 @@ void RemoteDebugger::HandleMessageReceived(char* message) {
   Handle<Object> details =
       Shell::DebugMessageDetails(Handle<String>::Cast(String::New(message)));
   if (try_catch.HasCaught()) {
-      Shell::ReportException(&try_catch);
+    Shell::ReportException(&try_catch);
+    PrintPrompt();
     return;
   }
   String::Utf8Value str(details->Get(String::New("text")));
@@ -277,11 +295,14 @@ void RemoteDebugger::HandleMessageReceived(char* message) {
   } else {
     printf("???\n");
   }
-  printf("dbg> ");
+
+  bool is_running = details->Get(String::New("running"))->ToBoolean()->Value();
+  PrintPrompt(is_running);
 }
 
 
 void RemoteDebugger::HandleKeyboardCommand(char* command) {
+  Locker lock;
   HandleScope scope;
 
   // Convert the debugger command to a JSON debugger request.
@@ -290,12 +311,14 @@ void RemoteDebugger::HandleKeyboardCommand(char* command) {
       Shell::DebugCommandToJSONRequest(String::New(command));
   if (try_catch.HasCaught()) {
     Shell::ReportException(&try_catch);
+    PrintPrompt();
     return;
   }
 
   // If undefined is returned the command was handled internally and there is
   // no JSON to send.
   if (request->IsUndefined()) {
+    PrintPrompt();
     return;
   }
 
@@ -306,14 +329,14 @@ void RemoteDebugger::HandleKeyboardCommand(char* command) {
 
 void ReceiverThread::Run() {
   // Receive the connect message (with empty body).
-  i::SmartPointer<char> message =
-    i::DebuggerAgentUtil::ReceiveMessage(remote_debugger_->conn());
+  i::SmartArrayPointer<char> message =
+      i::DebuggerAgentUtil::ReceiveMessage(remote_debugger_->conn());
   ASSERT(*message == NULL);
 
   while (true) {
     // Receive a message.
-    i::SmartPointer<char> message =
-      i::DebuggerAgentUtil::ReceiveMessage(remote_debugger_->conn());
+    i::SmartArrayPointer<char> message =
+        i::DebuggerAgentUtil::ReceiveMessage(remote_debugger_->conn());
     if (*message == NULL) {
       remote_debugger_->ConnectionClosed();
       return;
@@ -337,9 +360,11 @@ void KeyboardThread::Run() {
 
     // Pass the keyboard command to the main thread.
     remote_debugger_->KeyboardCommand(
-        i::SmartPointer<char>(i::StrDup(command)));
+        i::SmartArrayPointer<char>(i::StrDup(command)));
   }
 }
 
 
 }  // namespace v8
+
+#endif  // ENABLE_DEBUGGER_SUPPORT

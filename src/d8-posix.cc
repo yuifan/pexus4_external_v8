@@ -231,6 +231,7 @@ class ExecArgs {
   static const unsigned kMaxArgs = 1000;
   char** arg_array() { return exec_args_; }
   char* arg0() { return exec_args_[0]; }
+
  private:
   char* exec_args_[kMaxArgs + 1];
 };
@@ -311,10 +312,6 @@ static Handle<Value> GetStdout(int child_fd,
                                int read_timeout,
                                int total_timeout) {
   Handle<String> accumulator = String::Empty();
-  const char* source = "(function(a, b) { return a + b; })";
-  Handle<Value> cons_as_obj(Script::Compile(String::New(source))->Run());
-  Handle<Function> cons_function(Function::Cast(*cons_as_obj));
-  Handle<Value> cons_args[2];
 
   int fullness = 0;
   static const int kStdoutReadBufferSize = 4096;
@@ -350,12 +347,7 @@ static Handle<Value> GetStdout(int child_fd,
                    bytes_read + fullness :
                    LengthWithoutIncompleteUtf8(buffer, bytes_read + fullness);
       Handle<String> addition = String::New(buffer, length);
-      cons_args[0] = accumulator;
-      cons_args[1] = addition;
-      accumulator = Handle<String>::Cast(cons_function->Call(
-          Shell::utility_context()->Global(),
-          2,
-          cons_args));
+      accumulator = String::Concat(accumulator, addition);
       fullness = bytes_read + fullness - length;
       memcpy(buffer, buffer + length, fullness);
     }
@@ -374,8 +366,11 @@ static Handle<Value> GetStdout(int child_fd,
 // We're disabling usage of waitid in Mac OS X because it doens't work for us:
 // a parent process hangs on waiting while a child process is already a zombie.
 // See http://code.google.com/p/v8/issues/detail?id=401.
-#if defined(WNOWAIT) && !defined(ANDROID) && !defined(__APPLE__)
+#if defined(WNOWAIT) && !defined(ANDROID) && !defined(__APPLE__) \
+    && !defined(__NetBSD__)
+#if !defined(__FreeBSD__)
 #define HAS_WAITID 1
+#endif
 #endif
 
 
@@ -663,10 +658,28 @@ Handle<Value> Shell::SetEnvironment(const Arguments& args) {
 }
 
 
+Handle<Value> Shell::UnsetEnvironment(const Arguments& args) {
+  if (args.Length() != 1) {
+    const char* message = "unsetenv() takes one argument";
+    return ThrowException(String::New(message));
+  }
+  String::Utf8Value var(args[0]);
+  if (*var == NULL) {
+    const char* message =
+        "os.setenv(): String conversion of variable name failed.";
+    return ThrowException(String::New(message));
+  }
+  unsetenv(*var);
+  return v8::Undefined();
+}
+
+
 void Shell::AddOSMethods(Handle<ObjectTemplate> os_templ) {
   os_templ->Set(String::New("system"), FunctionTemplate::New(System));
   os_templ->Set(String::New("chdir"), FunctionTemplate::New(ChangeDirectory));
   os_templ->Set(String::New("setenv"), FunctionTemplate::New(SetEnvironment));
+  os_templ->Set(String::New("unsetenv"),
+                FunctionTemplate::New(UnsetEnvironment));
   os_templ->Set(String::New("umask"), FunctionTemplate::New(SetUMask));
   os_templ->Set(String::New("mkdirp"), FunctionTemplate::New(MakeDirectory));
   os_templ->Set(String::New("rmdir"), FunctionTemplate::New(RemoveDirectory));

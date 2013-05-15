@@ -1,4 +1,4 @@
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -28,23 +28,27 @@
 #ifndef V8_JSREGEXP_H_
 #define V8_JSREGEXP_H_
 
-#include "macro-assembler.h"
+#include "allocation.h"
+#include "assembler.h"
+#include "zone-inl.h"
 
 namespace v8 {
 namespace internal {
 
-
+class NodeVisitor;
+class RegExpCompiler;
 class RegExpMacroAssembler;
-
+class RegExpNode;
+class RegExpTree;
 
 class RegExpImpl {
  public:
   // Whether V8 is compiled with native regexp support or not.
   static bool UsesNativeRegExp() {
-#ifdef V8_NATIVE_REGEXP
-    return true;
-#else
+#ifdef V8_INTERPRETED_REGEXP
     return false;
+#else
+    return true;
 #endif
   }
 
@@ -76,10 +80,10 @@ class RegExpImpl {
                              Handle<JSArray> lastMatchInfo);
 
   // Prepares a JSRegExp object with Irregexp-specific data.
-  static void IrregexpPrepare(Handle<JSRegExp> re,
-                              Handle<String> pattern,
-                              JSRegExp::Flags flags,
-                              int capture_register_count);
+  static void IrregexpInitialize(Handle<JSRegExp> re,
+                                 Handle<String> pattern,
+                                 JSRegExp::Flags flags,
+                                 int capture_register_count);
 
 
   static void AtomCompile(Handle<JSRegExp> re,
@@ -91,6 +95,29 @@ class RegExpImpl {
                                  Handle<String> subject,
                                  int index,
                                  Handle<JSArray> lastMatchInfo);
+
+  enum IrregexpResult { RE_FAILURE = 0, RE_SUCCESS = 1, RE_EXCEPTION = -1 };
+
+  // Prepare a RegExp for being executed one or more times (using
+  // IrregexpExecOnce) on the subject.
+  // This ensures that the regexp is compiled for the subject, and that
+  // the subject is flat.
+  // Returns the number of integer spaces required by IrregexpExecOnce
+  // as its "registers" argument. If the regexp cannot be compiled,
+  // an exception is set as pending, and this function returns negative.
+  static int IrregexpPrepare(Handle<JSRegExp> regexp,
+                             Handle<String> subject);
+
+  // Execute a regular expression once on the subject, starting from
+  // character "index".
+  // If successful, returns RE_SUCCESS and set the capture positions
+  // in the first registers.
+  // If matching fails, returns RE_FAILURE.
+  // If execution fails, sets a pending exception and returns RE_EXCEPTION.
+  static IrregexpResult IrregexpExecOnce(Handle<JSRegExp> regexp,
+                                         Handle<String> subject,
+                                         int index,
+                                         Vector<int> registers);
 
   // Execute an Irregexp bytecode pattern.
   // On a successful match, the result is a JSArray containing
@@ -150,6 +177,14 @@ class RegExpImpl {
   static int IrregexpNumberOfRegisters(FixedArray* re);
   static ByteArray* IrregexpByteCode(FixedArray* re, bool is_ascii);
   static Code* IrregexpNativeCode(FixedArray* re, bool is_ascii);
+
+  // Limit the space regexps take up on the heap.  In order to limit this we
+  // would like to keep track of the amount of regexp code on the heap.  This
+  // is not tracked, however.  As a conservative approximation we track the
+  // total regexp code compiled including code that has subsequently been freed
+  // and the total executable memory at any point.
+  static const int kRegExpExecutableMemoryLimit = 16 * MB;
+  static const int kRegWxpCompiledLimit = 1 * MB;
 
  private:
   static String* last_ascii_string_;
@@ -223,6 +258,7 @@ class SetRelation BASE_EMBEDDED {
     return (bits_ == (kInFirst | kInSecond | kInBoth));
   }
   int value() { return bits_; }
+
  private:
   int bits_;
 };
@@ -292,7 +328,6 @@ class CharacterRange {
   // Negate the contents of a character range in canonical form.
   static void Negate(ZoneList<CharacterRange>* src,
                      ZoneList<CharacterRange>* dst);
-  static const int kRangeCanonicalizeMax = 0x346;
   static const int kStartMarker = (1 << 24);
   static const int kPayloadMask = (1 << 24) - 1;
 
@@ -356,7 +391,7 @@ class DispatchTable : public ZoneObject {
     typedef uc16 Key;
     typedef Entry Value;
     static const uc16 kNoKey;
-    static const Entry kNoValue;
+    static const Entry NoValue() { return Value(); }
     static inline int Compare(uc16 a, uc16 b) {
       if (a == b)
         return 0;
@@ -373,6 +408,7 @@ class DispatchTable : public ZoneObject {
 
   template <typename Callback>
   void ForEach(Callback* callback) { return tree()->ForEach(callback); }
+
  private:
   // There can't be a static empty set since it allocates its
   // successors in a zone and caches them.
@@ -573,8 +609,13 @@ class RegExpNode: public ZoneObject {
   // How many characters must this node consume at a minimum in order to
   // succeed.  If we have found at least 'still_to_find' characters that
   // must be consumed there is no need to ask any following nodes whether
-  // they are sure to eat any more characters.
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth) = 0;
+  // they are sure to eat any more characters.  The not_at_start argument is
+  // used to indicate that we know we are not at the start of the input.  In
+  // this case anchored branches will always fail and can be ignored when
+  // determining how many characters are consumed on success.
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start) = 0;
   // Emits some quick code that checks whether the preloaded characters match.
   // Falls through on certain failure, jumps to the label on possible success.
   // If the node cannot make a quick check it does nothing and returns false.
@@ -595,7 +636,7 @@ class RegExpNode: public ZoneObject {
   static const int kNodeIsTooComplexForGreedyLoops = -1;
   virtual int GreedyLoopTextLength() { return kNodeIsTooComplexForGreedyLoops; }
   Label* label() { return &label_; }
-  // If non-generic code is generated for a node (ie the node is not at the
+  // If non-generic code is generated for a node (i.e. the node is not at the
   // start of the trace) then it cannot be reused.  This variable sets a limit
   // on how often we allow that to happen before we insist on starting a new
   // trace and generating generic code for a node that can be reused by flushing
@@ -742,7 +783,9 @@ class ActionNode: public SeqRegExpNode {
                                      RegExpNode* on_success);
   virtual void Accept(NodeVisitor* visitor);
   virtual void Emit(RegExpCompiler* compiler, Trace* trace);
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth);
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start);
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int filled_in,
@@ -755,6 +798,7 @@ class ActionNode: public SeqRegExpNode {
   virtual int GreedyLoopTextLength() { return kNodeIsTooComplexForGreedyLoops; }
   virtual ActionNode* Clone() { return new ActionNode(*this); }
   virtual int ComputeFirstCharacterSet(int budget);
+
  private:
   union {
     struct {
@@ -806,7 +850,9 @@ class TextNode: public SeqRegExpNode {
   }
   virtual void Accept(NodeVisitor* visitor);
   virtual void Emit(RegExpCompiler* compiler, Trace* trace);
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth);
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start);
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int characters_filled_in,
@@ -821,6 +867,7 @@ class TextNode: public SeqRegExpNode {
   }
   void CalculateOffsets();
   virtual int ComputeFirstCharacterSet(int budget);
+
  private:
   enum TextEmitPassType {
     NON_ASCII_MATCH,             // Check for characters that can't match.
@@ -874,7 +921,9 @@ class AssertionNode: public SeqRegExpNode {
   }
   virtual void Accept(NodeVisitor* visitor);
   virtual void Emit(RegExpCompiler* compiler, Trace* trace);
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth);
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start);
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int filled_in,
@@ -883,6 +932,7 @@ class AssertionNode: public SeqRegExpNode {
   virtual AssertionNode* Clone() { return new AssertionNode(*this); }
   AssertionNodeType type() { return type_; }
   void set_type(AssertionNodeType type) { type_ = type; }
+
  private:
   AssertionNode(AssertionNodeType t, RegExpNode* on_success)
       : SeqRegExpNode(on_success), type_(t) { }
@@ -902,7 +952,9 @@ class BackReferenceNode: public SeqRegExpNode {
   int start_register() { return start_reg_; }
   int end_register() { return end_reg_; }
   virtual void Emit(RegExpCompiler* compiler, Trace* trace);
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth);
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start);
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int characters_filled_in,
@@ -911,6 +963,7 @@ class BackReferenceNode: public SeqRegExpNode {
   }
   virtual BackReferenceNode* Clone() { return new BackReferenceNode(*this); }
   virtual int ComputeFirstCharacterSet(int budget);
+
  private:
   int start_reg_;
   int end_reg_;
@@ -923,7 +976,9 @@ class EndNode: public RegExpNode {
   explicit EndNode(Action action) : action_(action) { }
   virtual void Accept(NodeVisitor* visitor);
   virtual void Emit(RegExpCompiler* compiler, Trace* trace);
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth) { return 0; }
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start) { return 0; }
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int characters_filled_in,
@@ -1005,10 +1060,13 @@ class ChoiceNode: public RegExpNode {
   ZoneList<GuardedAlternative>* alternatives() { return alternatives_; }
   DispatchTable* GetTable(bool ignore_case);
   virtual void Emit(RegExpCompiler* compiler, Trace* trace);
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth);
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start);
   int EatsAtLeastHelper(int still_to_find,
                         int recursion_depth,
-                        RegExpNode* ignore_this_node);
+                        RegExpNode* ignore_this_node,
+                        bool not_at_start);
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int characters_filled_in,
@@ -1022,7 +1080,7 @@ class ChoiceNode: public RegExpNode {
   virtual bool try_to_emit_quick_check_for_alternative(int i) { return true; }
 
  protected:
-  int GreedyLoopTextLength(GuardedAlternative* alternative);
+  int GreedyLoopTextLengthForAlternative(GuardedAlternative* alternative);
   ZoneList<GuardedAlternative>* alternatives_;
 
  private:
@@ -1031,7 +1089,7 @@ class ChoiceNode: public RegExpNode {
   void GenerateGuard(RegExpMacroAssembler* macro_assembler,
                      Guard* guard,
                      Trace* trace);
-  int CalculatePreloadCharacters(RegExpCompiler* compiler);
+  int CalculatePreloadCharacters(RegExpCompiler* compiler, bool not_at_start);
   void EmitOutOfLineContinuation(RegExpCompiler* compiler,
                                  Trace* trace,
                                  GuardedAlternative alternative,
@@ -1054,7 +1112,9 @@ class NegativeLookaheadChoiceNode: public ChoiceNode {
     AddAlternative(this_must_fail);
     AddAlternative(then_do_this);
   }
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth);
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start);
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int characters_filled_in,
@@ -1079,7 +1139,9 @@ class LoopChoiceNode: public ChoiceNode {
   void AddLoopAlternative(GuardedAlternative alt);
   void AddContinueAlternative(GuardedAlternative alt);
   virtual void Emit(RegExpCompiler* compiler, Trace* trace);
-  virtual int EatsAtLeast(int still_to_find, int recursion_depth);
+  virtual int EatsAtLeast(int still_to_find,
+                          int recursion_depth,
+                          bool not_at_start);
   virtual void GetQuickCheckDetails(QuickCheckDetails* details,
                                     RegExpCompiler* compiler,
                                     int characters_filled_in,
@@ -1248,6 +1310,7 @@ class Trace {
   }
   void InvalidateCurrentCharacter();
   void AdvanceCurrentPositionInTrace(int by, RegExpCompiler* compiler);
+
  private:
   int FindAffectedRegisters(OutSet* affected_registers);
   void PerformDeferredActions(RegExpMacroAssembler* macro,
@@ -1349,6 +1412,7 @@ FOR_EACH_NODE_TYPE(DECLARE_VISIT)
   void fail(const char* error_message) {
     error_message_ = error_message;
   }
+
  private:
   bool ignore_case_;
   bool is_ascii_;
@@ -1379,7 +1443,7 @@ class RegExpEngine: public AllStatic {
   struct CompilationResult {
     explicit CompilationResult(const char* error_message)
         : error_message(error_message),
-          code(Heap::the_hole_value()),
+          code(HEAP->the_hole_value()),
           num_registers(0) {}
     CompilationResult(Object* code, int registers)
       : error_message(NULL),
@@ -1402,16 +1466,16 @@ class RegExpEngine: public AllStatic {
 
 class OffsetsVector {
  public:
-  inline OffsetsVector(int num_registers)
+  inline OffsetsVector(int num_registers, Isolate* isolate)
       : offsets_vector_length_(num_registers) {
-    if (offsets_vector_length_ > kStaticOffsetsVectorSize) {
+    if (offsets_vector_length_ > Isolate::kJSRegexpStaticOffsetsVectorSize) {
       vector_ = NewArray<int>(offsets_vector_length_);
     } else {
-      vector_ = static_offsets_vector_;
+      vector_ = isolate->jsregexp_static_offsets_vector();
     }
   }
   inline ~OffsetsVector() {
-    if (offsets_vector_length_ > kStaticOffsetsVectorSize) {
+    if (offsets_vector_length_ > Isolate::kJSRegexpStaticOffsetsVectorSize) {
       DeleteArray(vector_);
       vector_ = NULL;
     }
@@ -1422,13 +1486,12 @@ class OffsetsVector {
   static const int kStaticOffsetsVectorSize = 50;
 
  private:
-  static Address static_offsets_vector_address() {
-    return reinterpret_cast<Address>(&static_offsets_vector_);
+  static Address static_offsets_vector_address(Isolate* isolate) {
+    return reinterpret_cast<Address>(isolate->jsregexp_static_offsets_vector());
   }
 
   int* vector_;
   int offsets_vector_length_;
-  static int static_offsets_vector_[kStaticOffsetsVectorSize];
 
   friend class ExternalReference;
 };

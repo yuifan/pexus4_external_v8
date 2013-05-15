@@ -25,6 +25,8 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// Flags: --allow-natives-syntax
+
 // Test the handling of initialization of deleted const variables.
 // This only makes sense in local scopes since the declaration and
 // initialization of consts in the global scope happen at the same
@@ -67,6 +69,10 @@ function testAssignmentArgument(x) {
   assertEquals(7, x);
 }
 
+for (var i = 0; i < 5; i++) {
+  testAssignmentArgument();
+}
+%OptimizeFunctionOnNextCall(testAssignmentArgument);
 testAssignmentArgument();
 assertEquals(6, x);
 
@@ -91,7 +97,7 @@ function testInitSlowCaseExtension() {
   var source = "";
   // Introduce 100 properties on the context extension object to force
   // it in slow case.
-  for (var i = 0; i < 100; i++) source += ("var a" + i + " = i;");
+  for (var i = 0; i < 100; i++) source += ("var a" + i + " = " + i + ";");
   source += "const x = 10; assertEquals(10, x); x = 11; assertEquals(10, x)";
   eval(source);
 }

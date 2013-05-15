@@ -67,7 +67,7 @@ function MakeMirror(value, opt_transient) {
       }
     }
   }
-  
+
   if (IS_UNDEFINED(value)) {
     mirror = new UndefinedMirror();
   } else if (IS_NULL(value)) {
@@ -110,7 +110,7 @@ function LookupMirror(handle) {
   return mirror_cache_[handle];
 }
 
-  
+
 /**
  * Returns the mirror for the undefined value.
  *
@@ -144,44 +144,46 @@ function inherits(ctor, superCtor) {
 
 
 // Type names of the different mirrors.
-const UNDEFINED_TYPE = 'undefined';
-const NULL_TYPE = 'null';
-const BOOLEAN_TYPE = 'boolean';
-const NUMBER_TYPE = 'number';
-const STRING_TYPE = 'string';
-const OBJECT_TYPE = 'object';
-const FUNCTION_TYPE = 'function';
-const REGEXP_TYPE = 'regexp';
-const ERROR_TYPE = 'error';
-const PROPERTY_TYPE = 'property';
-const FRAME_TYPE = 'frame';
-const SCRIPT_TYPE = 'script';
-const CONTEXT_TYPE = 'context';
-const SCOPE_TYPE = 'scope';
+var UNDEFINED_TYPE = 'undefined';
+var NULL_TYPE = 'null';
+var BOOLEAN_TYPE = 'boolean';
+var NUMBER_TYPE = 'number';
+var STRING_TYPE = 'string';
+var OBJECT_TYPE = 'object';
+var FUNCTION_TYPE = 'function';
+var REGEXP_TYPE = 'regexp';
+var ERROR_TYPE = 'error';
+var PROPERTY_TYPE = 'property';
+var FRAME_TYPE = 'frame';
+var SCRIPT_TYPE = 'script';
+var CONTEXT_TYPE = 'context';
+var SCOPE_TYPE = 'scope';
 
 // Maximum length when sending strings through the JSON protocol.
-const kMaxProtocolStringLength = 80;
+var kMaxProtocolStringLength = 80;
 
 // Different kind of properties.
-PropertyKind = {};
+var PropertyKind = {};
 PropertyKind.Named   = 1;
 PropertyKind.Indexed = 2;
 
 
 // A copy of the PropertyType enum from global.h
-PropertyType = {};
-PropertyType.Normal             = 0;
-PropertyType.Field              = 1;
-PropertyType.ConstantFunction   = 2;
-PropertyType.Callbacks          = 3;
-PropertyType.Interceptor        = 4;
-PropertyType.MapTransition      = 5;
-PropertyType.ConstantTransition = 6;
-PropertyType.NullDescriptor     = 7;
+var PropertyType = {};
+PropertyType.Normal                  = 0;
+PropertyType.Field                   = 1;
+PropertyType.ConstantFunction        = 2;
+PropertyType.Callbacks               = 3;
+PropertyType.Handler                 = 4;
+PropertyType.Interceptor             = 5;
+PropertyType.MapTransition           = 6;
+PropertyType.ExternalArrayTransition = 7;
+PropertyType.ConstantTransition      = 8;
+PropertyType.NullDescriptor          = 9;
 
 
 // Different attributes for a property.
-PropertyAttribute = {};
+var PropertyAttribute = {};
 PropertyAttribute.None       = NONE;
 PropertyAttribute.ReadOnly   = READ_ONLY;
 PropertyAttribute.DontEnum   = DONT_ENUM;
@@ -189,11 +191,12 @@ PropertyAttribute.DontDelete = DONT_DELETE;
 
 
 // A copy of the scope types from runtime.cc.
-ScopeType = { Global: 0,
-              Local: 1,
-              With: 2,
-              Closure: 3,
-              Catch: 4 };
+var ScopeType = { Global: 0,
+                  Local: 1,
+                  With: 2,
+                  Closure: 3,
+                  Catch: 4,
+                  Block: 5 };
 
 
 // Mirror hierarchy:
@@ -222,7 +225,7 @@ ScopeType = { Global: 0,
  */
 function Mirror(type) {
   this.type_ = type;
-};
+}
 
 
 Mirror.prototype.type = function() {
@@ -236,7 +239,7 @@ Mirror.prototype.type = function() {
  */
 Mirror.prototype.isValue = function() {
   return this instanceof ValueMirror;
-}
+};
 
 
 /**
@@ -245,7 +248,7 @@ Mirror.prototype.isValue = function() {
  */
 Mirror.prototype.isUndefined = function() {
   return this instanceof UndefinedMirror;
-}
+};
 
 
 /**
@@ -254,7 +257,7 @@ Mirror.prototype.isUndefined = function() {
  */
 Mirror.prototype.isNull = function() {
   return this instanceof NullMirror;
-}
+};
 
 
 /**
@@ -263,7 +266,7 @@ Mirror.prototype.isNull = function() {
  */
 Mirror.prototype.isBoolean = function() {
   return this instanceof BooleanMirror;
-}
+};
 
 
 /**
@@ -272,7 +275,7 @@ Mirror.prototype.isBoolean = function() {
  */
 Mirror.prototype.isNumber = function() {
   return this instanceof NumberMirror;
-}
+};
 
 
 /**
@@ -281,7 +284,7 @@ Mirror.prototype.isNumber = function() {
  */
 Mirror.prototype.isString = function() {
   return this instanceof StringMirror;
-}
+};
 
 
 /**
@@ -290,7 +293,7 @@ Mirror.prototype.isString = function() {
  */
 Mirror.prototype.isObject = function() {
   return this instanceof ObjectMirror;
-}
+};
 
 
 /**
@@ -299,7 +302,7 @@ Mirror.prototype.isObject = function() {
  */
 Mirror.prototype.isFunction = function() {
   return this instanceof FunctionMirror;
-}
+};
 
 
 /**
@@ -308,7 +311,7 @@ Mirror.prototype.isFunction = function() {
  */
 Mirror.prototype.isUnresolvedFunction = function() {
   return this instanceof UnresolvedFunctionMirror;
-}
+};
 
 
 /**
@@ -317,7 +320,7 @@ Mirror.prototype.isUnresolvedFunction = function() {
  */
 Mirror.prototype.isArray = function() {
   return this instanceof ArrayMirror;
-}
+};
 
 
 /**
@@ -326,7 +329,7 @@ Mirror.prototype.isArray = function() {
  */
 Mirror.prototype.isDate = function() {
   return this instanceof DateMirror;
-}
+};
 
 
 /**
@@ -335,7 +338,7 @@ Mirror.prototype.isDate = function() {
  */
 Mirror.prototype.isRegExp = function() {
   return this instanceof RegExpMirror;
-}
+};
 
 
 /**
@@ -344,7 +347,7 @@ Mirror.prototype.isRegExp = function() {
  */
 Mirror.prototype.isError = function() {
   return this instanceof ErrorMirror;
-}
+};
 
 
 /**
@@ -353,7 +356,7 @@ Mirror.prototype.isError = function() {
  */
 Mirror.prototype.isProperty = function() {
   return this instanceof PropertyMirror;
-}
+};
 
 
 /**
@@ -362,7 +365,7 @@ Mirror.prototype.isProperty = function() {
  */
 Mirror.prototype.isFrame = function() {
   return this instanceof FrameMirror;
-}
+};
 
 
 /**
@@ -371,7 +374,7 @@ Mirror.prototype.isFrame = function() {
  */
 Mirror.prototype.isScript = function() {
   return this instanceof ScriptMirror;
-}
+};
 
 
 /**
@@ -380,7 +383,7 @@ Mirror.prototype.isScript = function() {
  */
 Mirror.prototype.isContext = function() {
   return this instanceof ContextMirror;
-}
+};
 
 
 /**
@@ -389,7 +392,7 @@ Mirror.prototype.isContext = function() {
  */
 Mirror.prototype.isScope = function() {
   return this instanceof ScopeMirror;
-}
+};
 
 
 /**
@@ -397,7 +400,7 @@ Mirror.prototype.isScope = function() {
  */
 Mirror.prototype.allocateHandle_ = function() {
   this.handle_ = next_handle_++;
-}
+};
 
 
 /**
@@ -406,13 +409,13 @@ Mirror.prototype.allocateHandle_ = function() {
  */
 Mirror.prototype.allocateTransientHandle_ = function() {
   this.handle_ = next_transient_handle_--;
-}
+};
 
 
 Mirror.prototype.toText = function() {
   // Simpel to text which is used when on specialization in subclass.
-  return "#<" + builtins.GetInstanceName(this.constructor.name) + ">";
-}
+  return "#<" + this.constructor.name + ">";
+};
 
 
 /**
@@ -425,7 +428,7 @@ Mirror.prototype.toText = function() {
  * @extends Mirror
  */
 function ValueMirror(type, value, transient) {
-  Mirror.call(this, type);
+  %_CallFunction(this, type, Mirror);
   this.value_ = value;
   if (!transient) {
     this.allocateHandle_();
@@ -470,14 +473,14 @@ ValueMirror.prototype.value = function() {
  * @extends ValueMirror
  */
 function UndefinedMirror() {
-  ValueMirror.call(this, UNDEFINED_TYPE, void 0);
+  %_CallFunction(this, UNDEFINED_TYPE, void 0, ValueMirror);
 }
 inherits(UndefinedMirror, ValueMirror);
 
 
 UndefinedMirror.prototype.toText = function() {
   return 'undefined';
-}
+};
 
 
 /**
@@ -486,14 +489,14 @@ UndefinedMirror.prototype.toText = function() {
  * @extends ValueMirror
  */
 function NullMirror() {
-  ValueMirror.call(this, NULL_TYPE, null);
+  %_CallFunction(this, NULL_TYPE, null, ValueMirror);
 }
 inherits(NullMirror, ValueMirror);
 
 
 NullMirror.prototype.toText = function() {
   return 'null';
-}
+};
 
 
 /**
@@ -503,14 +506,14 @@ NullMirror.prototype.toText = function() {
  * @extends ValueMirror
  */
 function BooleanMirror(value) {
-  ValueMirror.call(this, BOOLEAN_TYPE, value);
+  %_CallFunction(this, BOOLEAN_TYPE, value, ValueMirror);
 }
 inherits(BooleanMirror, ValueMirror);
 
 
 BooleanMirror.prototype.toText = function() {
   return this.value_ ? 'true' : 'false';
-}
+};
 
 
 /**
@@ -520,14 +523,14 @@ BooleanMirror.prototype.toText = function() {
  * @extends ValueMirror
  */
 function NumberMirror(value) {
-  ValueMirror.call(this, NUMBER_TYPE, value);
+  %_CallFunction(this, NUMBER_TYPE, value, ValueMirror);
 }
 inherits(NumberMirror, ValueMirror);
 
 
 NumberMirror.prototype.toText = function() {
   return %NumberToString(this.value_);
-}
+};
 
 
 /**
@@ -537,7 +540,7 @@ NumberMirror.prototype.toText = function() {
  * @extends ValueMirror
  */
 function StringMirror(value) {
-  ValueMirror.call(this, STRING_TYPE, value);
+  %_CallFunction(this, STRING_TYPE, value, ValueMirror);
 }
 inherits(StringMirror, ValueMirror);
 
@@ -552,11 +555,11 @@ StringMirror.prototype.getTruncatedValue = function(maxLength) {
            '... (length: ' + this.length() + ')';
   }
   return this.value_;
-}
+};
 
 StringMirror.prototype.toText = function() {
   return this.getTruncatedValue(kMaxProtocolStringLength);
-}
+};
 
 
 /**
@@ -568,7 +571,7 @@ StringMirror.prototype.toText = function() {
  * @extends ValueMirror
  */
 function ObjectMirror(value, type, transient) {
-  ValueMirror.call(this, type || OBJECT_TYPE, value, transient);
+  %_CallFunction(this, type || OBJECT_TYPE, value, transient, ValueMirror);
 }
 inherits(ObjectMirror, ValueMirror);
 
@@ -622,7 +625,7 @@ ObjectMirror.prototype.propertyNames = function(kind, limit) {
   var propertyNames;
   var elementNames;
   var total = 0;
-  
+
   // Find all the named properties.
   if (kind & PropertyKind.Named) {
     // Get the local property names.
@@ -767,7 +770,7 @@ ObjectMirror.prototype.toText = function() {
       name = this.className();
     }
   }
-  return '#<' + builtins.GetInstanceName(name) + '>';
+  return '#<' + name + '>';
 };
 
 
@@ -778,7 +781,7 @@ ObjectMirror.prototype.toText = function() {
  * @extends ObjectMirror
  */
 function FunctionMirror(value) {
-  ObjectMirror.call(this, value, FUNCTION_TYPE);
+  %_CallFunction(this, value, FUNCTION_TYPE, ObjectMirror);
   this.resolved_ = true;
 }
 inherits(FunctionMirror, ObjectMirror);
@@ -895,7 +898,7 @@ FunctionMirror.prototype.constructedBy = function(opt_max_instances) {
 
 FunctionMirror.prototype.toText = function() {
   return this.source();
-}
+};
 
 
 /**
@@ -908,7 +911,7 @@ FunctionMirror.prototype.toText = function() {
 function UnresolvedFunctionMirror(value) {
   // Construct this using the ValueMirror as an unresolved function is not a
   // real object but just a string.
-  ValueMirror.call(this, FUNCTION_TYPE, value);
+  %_CallFunction(this, FUNCTION_TYPE, value, ValueMirror);
   this.propertyCount_ = 0;
   this.elementCount_ = 0;
   this.resolved_ = false;
@@ -948,7 +951,7 @@ UnresolvedFunctionMirror.prototype.inferredName = function() {
 
 UnresolvedFunctionMirror.prototype.propertyNames = function(kind, limit) {
   return [];
-}
+};
 
 
 /**
@@ -958,7 +961,7 @@ UnresolvedFunctionMirror.prototype.propertyNames = function(kind, limit) {
  * @extends ObjectMirror
  */
 function ArrayMirror(value) {
-  ObjectMirror.call(this, value);
+  %_CallFunction(this, value, ObjectMirror);
 }
 inherits(ArrayMirror, ObjectMirror);
 
@@ -968,7 +971,8 @@ ArrayMirror.prototype.length = function() {
 };
 
 
-ArrayMirror.prototype.indexedPropertiesFromRange = function(opt_from_index, opt_to_index) {
+ArrayMirror.prototype.indexedPropertiesFromRange = function(opt_from_index,
+                                                            opt_to_index) {
   var from_index = opt_from_index || 0;
   var to_index = opt_to_index || this.length() - 1;
   if (from_index > to_index) return new Array();
@@ -984,7 +988,7 @@ ArrayMirror.prototype.indexedPropertiesFromRange = function(opt_from_index, opt_
     values[i - from_index] = value;
   }
   return values;
-}
+};
 
 
 /**
@@ -994,7 +998,7 @@ ArrayMirror.prototype.indexedPropertiesFromRange = function(opt_from_index, opt_
  * @extends ObjectMirror
  */
 function DateMirror(value) {
-  ObjectMirror.call(this, value);
+  %_CallFunction(this, value, ObjectMirror);
 }
 inherits(DateMirror, ObjectMirror);
 
@@ -1002,7 +1006,7 @@ inherits(DateMirror, ObjectMirror);
 DateMirror.prototype.toText = function() {
   var s = JSON.stringify(this.value_);
   return s.substring(1, s.length - 1);  // cut quotes
-}
+};
 
 
 /**
@@ -1012,7 +1016,7 @@ DateMirror.prototype.toText = function() {
  * @extends ObjectMirror
  */
 function RegExpMirror(value) {
-  ObjectMirror.call(this, value, REGEXP_TYPE);
+  %_CallFunction(this, value, REGEXP_TYPE, ObjectMirror);
 }
 inherits(RegExpMirror, ObjectMirror);
 
@@ -1056,7 +1060,7 @@ RegExpMirror.prototype.multiline = function() {
 RegExpMirror.prototype.toText = function() {
   // Simpel to text which is used when on specialization in subclass.
   return "/" + this.source() + "/";
-}
+};
 
 
 /**
@@ -1066,7 +1070,7 @@ RegExpMirror.prototype.toText = function() {
  * @extends ObjectMirror
  */
 function ErrorMirror(value) {
-  ObjectMirror.call(this, value, ERROR_TYPE);
+  %_CallFunction(this, value, ERROR_TYPE, ObjectMirror);
 }
 inherits(ErrorMirror, ObjectMirror);
 
@@ -1084,12 +1088,12 @@ ErrorMirror.prototype.toText = function() {
   // Use the same text representation as in messages.js.
   var text;
   try {
-    str = builtins.ToDetailString(this.value_);
+    str = %_CallFunction(this.value_, builtins.ErrorToString);
   } catch (e) {
-    str = '#<an Error>';
+    str = '#<Error>';
   }
   return str;
-}
+};
 
 
 /**
@@ -1101,13 +1105,13 @@ ErrorMirror.prototype.toText = function() {
  * @extends Mirror
  */
 function PropertyMirror(mirror, name, details) {
-  Mirror.call(this, PROPERTY_TYPE);
+  %_CallFunction(this, PROPERTY_TYPE, Mirror);
   this.mirror_ = mirror;
   this.name_ = name;
   this.value_ = details[0];
   this.details_ = details[1];
   if (details.length > 2) {
-    this.exception_ = details[2]
+    this.exception_ = details[2];
     this.getter_ = details[3];
     this.setter_ = details[4];
   }
@@ -1117,22 +1121,22 @@ inherits(PropertyMirror, Mirror);
 
 PropertyMirror.prototype.isReadOnly = function() {
   return (this.attributes() & PropertyAttribute.ReadOnly) != 0;
-}
+};
 
 
 PropertyMirror.prototype.isEnum = function() {
   return (this.attributes() & PropertyAttribute.DontEnum) == 0;
-}
+};
 
 
 PropertyMirror.prototype.canDelete = function() {
   return (this.attributes() & PropertyAttribute.DontDelete) == 0;
-}
+};
 
 
 PropertyMirror.prototype.name = function() {
   return this.name_;
-}
+};
 
 
 PropertyMirror.prototype.isIndexed = function() {
@@ -1142,12 +1146,12 @@ PropertyMirror.prototype.isIndexed = function() {
     }
   }
   return true;
-}
+};
 
 
 PropertyMirror.prototype.value = function() {
   return MakeMirror(this.value_, false);
-}
+};
 
 
 /**
@@ -1156,22 +1160,22 @@ PropertyMirror.prototype.value = function() {
  */
 PropertyMirror.prototype.isException = function() {
   return this.exception_ ? true : false;
-}
+};
 
 
 PropertyMirror.prototype.attributes = function() {
   return %DebugPropertyAttributesFromDetails(this.details_);
-}
+};
 
 
 PropertyMirror.prototype.propertyType = function() {
   return %DebugPropertyTypeFromDetails(this.details_);
-}
+};
 
 
 PropertyMirror.prototype.insertionIndex = function() {
   return %DebugPropertyIndexFromDetails(this.details_);
-}
+};
 
 
 /**
@@ -1180,7 +1184,7 @@ PropertyMirror.prototype.insertionIndex = function() {
  */
 PropertyMirror.prototype.hasGetter = function() {
   return this.getter_ ? true : false;
-}
+};
 
 
 /**
@@ -1189,7 +1193,7 @@ PropertyMirror.prototype.hasGetter = function() {
  */
 PropertyMirror.prototype.hasSetter = function() {
   return this.setter_ ? true : false;
-}
+};
 
 
 /**
@@ -1203,7 +1207,7 @@ PropertyMirror.prototype.getter = function() {
   } else {
     return GetUndefinedMirror();
   }
-}
+};
 
 
 /**
@@ -1217,35 +1221,40 @@ PropertyMirror.prototype.setter = function() {
   } else {
     return GetUndefinedMirror();
   }
-}
+};
 
 
 /**
  * Returns whether this property is natively implemented by the host or a set
  * through JavaScript code.
- * @return {boolean} True if the property is 
+ * @return {boolean} True if the property is
  *     UndefinedMirror if there is no setter for this property
  */
 PropertyMirror.prototype.isNative = function() {
   return (this.propertyType() == PropertyType.Interceptor) ||
          ((this.propertyType() == PropertyType.Callbacks) &&
           !this.hasGetter() && !this.hasSetter());
-}
+};
 
 
-const kFrameDetailsFrameIdIndex = 0;
-const kFrameDetailsReceiverIndex = 1;
-const kFrameDetailsFunctionIndex = 2;
-const kFrameDetailsArgumentCountIndex = 3;
-const kFrameDetailsLocalCountIndex = 4;
-const kFrameDetailsSourcePositionIndex = 5;
-const kFrameDetailsConstructCallIndex = 6;
-const kFrameDetailsDebuggerFrameIndex = 7;
-const kFrameDetailsFirstDynamicIndex = 8;
+var kFrameDetailsFrameIdIndex = 0;
+var kFrameDetailsReceiverIndex = 1;
+var kFrameDetailsFunctionIndex = 2;
+var kFrameDetailsArgumentCountIndex = 3;
+var kFrameDetailsLocalCountIndex = 4;
+var kFrameDetailsSourcePositionIndex = 5;
+var kFrameDetailsConstructCallIndex = 6;
+var kFrameDetailsAtReturnIndex = 7;
+var kFrameDetailsFlagsIndex = 8;
+var kFrameDetailsFirstDynamicIndex = 9;
 
-const kFrameDetailsNameIndex = 0;
-const kFrameDetailsValueIndex = 1;
-const kFrameDetailsNameValueSize = 2;
+var kFrameDetailsNameIndex = 0;
+var kFrameDetailsValueIndex = 1;
+var kFrameDetailsNameValueSize = 2;
+
+var kFrameDetailsFlagDebuggerFrameMask = 1 << 0;
+var kFrameDetailsFlagOptimizedFrameMask = 1 << 1;
+var kFrameDetailsFlagInlinedFrameIndexMask = 7 << 2;
 
 /**
  * Wrapper for the frame details information retreived from the VM. The frame
@@ -1258,8 +1267,11 @@ const kFrameDetailsNameValueSize = 2;
  *     4: Local count
  *     5: Source position
  *     6: Construct call
+ *     7: Is at return
+ *     8: Flags (debugger frame, optimized frame, inlined frame index)
  *     Arguments name, value
  *     Locals name, value
+ *     Return value if any
  * @param {number} break_id Current break id
  * @param {number} index Frame number
  * @constructor
@@ -1273,37 +1285,63 @@ function FrameDetails(break_id, index) {
 FrameDetails.prototype.frameId = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kFrameDetailsFrameIdIndex];
-}
+};
 
 
 FrameDetails.prototype.receiver = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kFrameDetailsReceiverIndex];
-}
+};
 
 
 FrameDetails.prototype.func = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kFrameDetailsFunctionIndex];
-}
+};
 
 
 FrameDetails.prototype.isConstructCall = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kFrameDetailsConstructCallIndex];
-}
+};
+
+
+FrameDetails.prototype.isAtReturn = function() {
+  %CheckExecutionState(this.break_id_);
+  return this.details_[kFrameDetailsAtReturnIndex];
+};
 
 
 FrameDetails.prototype.isDebuggerFrame = function() {
   %CheckExecutionState(this.break_id_);
-  return this.details_[kFrameDetailsDebuggerFrameIndex];
-}
+  var f = kFrameDetailsFlagDebuggerFrameMask;
+  return (this.details_[kFrameDetailsFlagsIndex] & f) == f;
+};
+
+
+FrameDetails.prototype.isOptimizedFrame = function() {
+  %CheckExecutionState(this.break_id_);
+  var f = kFrameDetailsFlagOptimizedFrameMask;
+  return (this.details_[kFrameDetailsFlagsIndex] & f) == f;
+};
+
+
+FrameDetails.prototype.isInlinedFrame = function() {
+  return this.inlinedFrameIndex() > 0;
+};
+
+
+FrameDetails.prototype.inlinedFrameIndex = function() {
+  %CheckExecutionState(this.break_id_);
+  var f = kFrameDetailsFlagInlinedFrameIndexMask;
+  return (this.details_[kFrameDetailsFlagsIndex] & f) >> 2;
+};
 
 
 FrameDetails.prototype.argumentCount = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kFrameDetailsArgumentCountIndex];
-}
+};
 
 
 FrameDetails.prototype.argumentName = function(index) {
@@ -1311,9 +1349,9 @@ FrameDetails.prototype.argumentName = function(index) {
   if (index >= 0 && index < this.argumentCount()) {
     return this.details_[kFrameDetailsFirstDynamicIndex +
                          index * kFrameDetailsNameValueSize +
-                         kFrameDetailsNameIndex]
+                         kFrameDetailsNameIndex];
   }
-}
+};
 
 
 FrameDetails.prototype.argumentValue = function(index) {
@@ -1321,48 +1359,61 @@ FrameDetails.prototype.argumentValue = function(index) {
   if (index >= 0 && index < this.argumentCount()) {
     return this.details_[kFrameDetailsFirstDynamicIndex +
                          index * kFrameDetailsNameValueSize +
-                         kFrameDetailsValueIndex]
+                         kFrameDetailsValueIndex];
   }
-}
+};
 
 
 FrameDetails.prototype.localCount = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kFrameDetailsLocalCountIndex];
-}
+};
 
 
 FrameDetails.prototype.sourcePosition = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kFrameDetailsSourcePositionIndex];
-}
+};
 
 
 FrameDetails.prototype.localName = function(index) {
   %CheckExecutionState(this.break_id_);
   if (index >= 0 && index < this.localCount()) {
-    var locals_offset = kFrameDetailsFirstDynamicIndex + this.argumentCount() * kFrameDetailsNameValueSize
+    var locals_offset = kFrameDetailsFirstDynamicIndex +
+                        this.argumentCount() * kFrameDetailsNameValueSize;
     return this.details_[locals_offset +
                          index * kFrameDetailsNameValueSize +
-                         kFrameDetailsNameIndex]
+                         kFrameDetailsNameIndex];
   }
-}
+};
 
 
 FrameDetails.prototype.localValue = function(index) {
   %CheckExecutionState(this.break_id_);
   if (index >= 0 && index < this.localCount()) {
-    var locals_offset = kFrameDetailsFirstDynamicIndex + this.argumentCount() * kFrameDetailsNameValueSize
+    var locals_offset = kFrameDetailsFirstDynamicIndex +
+                        this.argumentCount() * kFrameDetailsNameValueSize;
     return this.details_[locals_offset +
                          index * kFrameDetailsNameValueSize +
-                         kFrameDetailsValueIndex]
+                         kFrameDetailsValueIndex];
   }
-}
+};
+
+
+FrameDetails.prototype.returnValue = function() {
+  %CheckExecutionState(this.break_id_);
+  var return_value_offset =
+      kFrameDetailsFirstDynamicIndex +
+      (this.argumentCount() + this.localCount()) * kFrameDetailsNameValueSize;
+  if (this.details_[kFrameDetailsAtReturnIndex]) {
+    return this.details_[return_value_offset];
+  }
+};
 
 
 FrameDetails.prototype.scopeCount = function() {
   return %GetScopeCount(this.break_id_, this.frameId());
-}
+};
 
 
 /**
@@ -1374,7 +1425,7 @@ FrameDetails.prototype.scopeCount = function() {
  * @extends Mirror
  */
 function FrameMirror(break_id, index) {
-  Mirror.call(this, FRAME_TYPE);
+  %_CallFunction(this, FRAME_TYPE, Mirror);
   this.break_id_ = break_id;
   this.index_ = index;
   this.details_ = new FrameDetails(break_id, index);
@@ -1390,7 +1441,7 @@ FrameMirror.prototype.index = function() {
 FrameMirror.prototype.func = function() {
   // Get the function for this frame from the VM.
   var f = this.details_.func();
-  
+
   // Create a function mirror. NOTE: MakeMirror cannot be used here as the
   // value returned from the VM might be a string if the function for the
   // frame is unresolved.
@@ -1412,8 +1463,28 @@ FrameMirror.prototype.isConstructCall = function() {
 };
 
 
+FrameMirror.prototype.isAtReturn = function() {
+  return this.details_.isAtReturn();
+};
+
+
 FrameMirror.prototype.isDebuggerFrame = function() {
   return this.details_.isDebuggerFrame();
+};
+
+
+FrameMirror.prototype.isOptimizedFrame = function() {
+  return this.details_.isOptimizedFrame();
+};
+
+
+FrameMirror.prototype.isInlinedFrame = function() {
+  return this.details_.isInlinedFrame();
+};
+
+
+FrameMirror.prototype.inlinedFrameIndex = function() {
+  return this.details_.inlinedFrameIndex();
 };
 
 
@@ -1444,6 +1515,11 @@ FrameMirror.prototype.localName = function(index) {
 
 FrameMirror.prototype.localValue = function(index) {
   return MakeMirror(this.details_.localValue(index));
+};
+
+
+FrameMirror.prototype.returnValue = function() {
+  return MakeMirror(this.details_.returnValue());
 };
 
 
@@ -1500,9 +1576,14 @@ FrameMirror.prototype.scope = function(index) {
 };
 
 
-FrameMirror.prototype.evaluate = function(source, disable_break) {
-  var result = %DebugEvaluate(this.break_id_, this.details_.frameId(),
-                              source, Boolean(disable_break));
+FrameMirror.prototype.evaluate = function(source, disable_break,
+                                          opt_context_object) {
+  var result = %DebugEvaluate(this.break_id_,
+                              this.details_.frameId(),
+                              this.details_.inlinedFrameIndex(),
+                              source,
+                              Boolean(disable_break),
+                              opt_context_object);
   return MakeMirror(result);
 };
 
@@ -1520,15 +1601,18 @@ FrameMirror.prototype.invocationText = function() {
     result += '[debugger]';
   } else {
     // If the receiver has a className which is 'global' don't display it.
-    var display_receiver = !receiver.className || receiver.className() != 'global';
+    var display_receiver =
+      !receiver.className || (receiver.className() != 'global');
     if (display_receiver) {
       result += receiver.toText();
     }
     // Try to find the function as a property in the receiver. Include the
     // prototype chain in the lookup.
     var property = GetUndefinedMirror();
-    if (!receiver.isUndefined()) {
-      for (var r = receiver; !r.isNull() && property.isUndefined(); r = r.protoObject()) {
+    if (receiver.isObject()) {
+      for (var r = receiver;
+           !r.isNull() && property.isUndefined();
+           r = r.protoObject()) {
         property = r.lookupProperty(func);
       }
     }
@@ -1574,8 +1658,13 @@ FrameMirror.prototype.invocationText = function() {
     result += ')';
   }
 
+  if (this.isAtReturn()) {
+    result += ' returning ';
+    result += this.returnValue().toText();
+  }
+
   return result;
-}
+};
 
 
 FrameMirror.prototype.sourceAndPositionText = function() {
@@ -1607,13 +1696,13 @@ FrameMirror.prototype.sourceAndPositionText = function() {
   }
 
   return result;
-}
+};
 
 
 FrameMirror.prototype.localsText = function() {
   // Format local variables.
   var result = '';
-  var locals_count = this.localCount()
+  var locals_count = this.localCount();
   if (locals_count > 0) {
     for (var i = 0; i < locals_count; ++i) {
       result += '      var ';
@@ -1625,7 +1714,7 @@ FrameMirror.prototype.localsText = function() {
   }
 
   return result;
-}
+};
 
 
 FrameMirror.prototype.toText = function(opt_locals) {
@@ -1640,16 +1729,17 @@ FrameMirror.prototype.toText = function(opt_locals) {
     result += this.localsText();
   }
   return result;
-}
+};
 
 
-const kScopeDetailsTypeIndex = 0;
-const kScopeDetailsObjectIndex = 1;
+var kScopeDetailsTypeIndex = 0;
+var kScopeDetailsObjectIndex = 1;
 
 function ScopeDetails(frame, index) {
   this.break_id_ = frame.break_id_;
   this.details_ = %GetScopeDetails(frame.break_id_,
                                    frame.details_.frameId(),
+                                   frame.details_.inlinedFrameIndex(),
                                    index);
 }
 
@@ -1657,13 +1747,13 @@ function ScopeDetails(frame, index) {
 ScopeDetails.prototype.type = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kScopeDetailsTypeIndex];
-}
+};
 
 
 ScopeDetails.prototype.object = function() {
   %CheckExecutionState(this.break_id_);
   return this.details_[kScopeDetailsObjectIndex];
-}
+};
 
 
 /**
@@ -1674,7 +1764,7 @@ ScopeDetails.prototype.object = function() {
  * @extends Mirror
  */
 function ScopeMirror(frame, index) {
-  Mirror.call(this, SCOPE_TYPE);
+  %_CallFunction(this, SCOPE_TYPE, Mirror);
   this.frame_index_ = frame.index_;
   this.scope_index_ = index;
   this.details_ = new ScopeDetails(frame, index);
@@ -1714,7 +1804,7 @@ ScopeMirror.prototype.scopeObject = function() {
  * @extends Mirror
  */
 function ScriptMirror(script) {
-  Mirror.call(this, SCRIPT_TYPE);
+  %_CallFunction(this, SCRIPT_TYPE, Mirror);
   this.script_ = script;
   this.context_ = new ContextMirror(script.context_data);
   this.allocateHandle_();
@@ -1728,8 +1818,7 @@ ScriptMirror.prototype.value = function() {
 
 
 ScriptMirror.prototype.name = function() {
-  // If we have name, we trust it more than sourceURL from comments
-  return this.script_.name || this.sourceUrlFromComment_();
+  return this.script_.name || this.script_.nameOrSourceURL();
 };
 
 
@@ -1740,6 +1829,11 @@ ScriptMirror.prototype.id = function() {
 
 ScriptMirror.prototype.source = function() {
   return this.script_.source;
+};
+
+
+ScriptMirror.prototype.setSource = function(source) {
+  %DebugSetScriptSource(this.script_, source);
 };
 
 
@@ -1776,12 +1870,12 @@ ScriptMirror.prototype.lineCount = function() {
 ScriptMirror.prototype.locationFromPosition = function(
     position, include_resource_offset) {
   return this.script_.locationFromPosition(position, include_resource_offset);
-}
+};
 
 
 ScriptMirror.prototype.sourceSlice = function (opt_from_line, opt_to_line) {
   return this.script_.sourceSlice(opt_from_line, opt_to_line);
-}
+};
 
 
 ScriptMirror.prototype.context = function() {
@@ -1821,29 +1915,6 @@ ScriptMirror.prototype.toText = function() {
   }
   result += ')';
   return result;
-}
-
-
-/**
- * Returns a suggested script URL from comments in script code (if found), 
- * undefined otherwise. Used primarily by debuggers for identifying eval()'ed
- * scripts. See 
- * http://fbug.googlecode.com/svn/branches/firebug1.1/docs/ReleaseNotes_1.1.txt
- * for details.
- * 
- * @return {?string} value for //@ sourceURL comment
- */
-ScriptMirror.prototype.sourceUrlFromComment_ = function() {
-  if (!('sourceUrl_' in this) && this.source()) {
-    // TODO(608): the spaces in a regexp below had to be escaped as \040 
-    // because this file is being processed by js2c whose handling of spaces
-    // in regexps is broken.
-    // We're not using \s here to prevent \n from matching.
-    var sourceUrlPattern = /\/\/@[\040\t]sourceURL=[\040\t]*(\S+)[\040\t]*$/m;
-    var match = sourceUrlPattern.exec(this.source());
-    this.sourceUrl_ = match ? match[1] : undefined;
-  }
-  return this.sourceUrl_;
 };
 
 
@@ -1854,7 +1925,7 @@ ScriptMirror.prototype.sourceUrlFromComment_ = function() {
  * @extends Mirror
  */
 function ContextMirror(data) {
-  Mirror.call(this, CONTEXT_TYPE);
+  %_CallFunction(this, CONTEXT_TYPE, Mirror);
   this.data_ = data;
   this.allocateHandle_();
 }
@@ -1902,7 +1973,7 @@ function JSONProtocolSerializer(details, options) {
  */
 JSONProtocolSerializer.prototype.serializeReference = function(mirror) {
   return this.serialize_(mirror, true, true);
-}
+};
 
 
 /**
@@ -1915,7 +1986,7 @@ JSONProtocolSerializer.prototype.serializeReference = function(mirror) {
 JSONProtocolSerializer.prototype.serializeValue = function(mirror) {
   var json = this.serialize_(mirror, false, true);
   return json;
-}
+};
 
 
 /**
@@ -1928,26 +1999,26 @@ JSONProtocolSerializer.prototype.serializeValue = function(mirror) {
 JSONProtocolSerializer.prototype.serializeReferencedObjects = function() {
   // Collect the protocol representation of the referenced objects in an array.
   var content = [];
-  
+
   // Get the number of referenced objects.
   var count = this.mirrors_.length;
-  
+
   for (var i = 0; i < count; i++) {
     content.push(this.serialize_(this.mirrors_[i], false, false));
   }
 
   return content;
-}
+};
 
 
 JSONProtocolSerializer.prototype.includeSource_ = function() {
   return this.options_ && this.options_.includeSource;
-}
+};
 
 
 JSONProtocolSerializer.prototype.inlineRefs_ = function() {
   return this.options_ && this.options_.inlineRefs;
-}
+};
 
 
 JSONProtocolSerializer.prototype.maxStringLength_ = function() {
@@ -1956,7 +2027,7 @@ JSONProtocolSerializer.prototype.maxStringLength_ = function() {
     return kMaxProtocolStringLength;
   }
   return this.options_.maxStringLength;
-}
+};
 
 
 JSONProtocolSerializer.prototype.add_ = function(mirror) {
@@ -1966,10 +2037,10 @@ JSONProtocolSerializer.prototype.add_ = function(mirror) {
       return;
     }
   }
-  
+
   // Add the mirror to the list of mirrors to be serialized.
   this.mirrors_.push(mirror);
-}
+};
 
 
 /**
@@ -1978,7 +2049,7 @@ JSONProtocolSerializer.prototype.add_ = function(mirror) {
  * @param {Mirror} mirror Mirror to serialize.
  * @return {Object} Protocol reference object.
  */
-JSONProtocolSerializer.prototype.serializeReferenceWithDisplayData_ = 
+JSONProtocolSerializer.prototype.serializeReferenceWithDisplayData_ =
     function(mirror) {
   var o = {};
   o.ref = mirror.handle();
@@ -2025,7 +2096,7 @@ JSONProtocolSerializer.prototype.serialize_ = function(mirror, reference,
       return {'ref' : mirror.handle()};
     }
   }
-  
+
   // Collect the JSON property/value pairs.
   var content = {};
 
@@ -2076,7 +2147,7 @@ JSONProtocolSerializer.prototype.serialize_ = function(mirror, reference,
       break;
 
     case PROPERTY_TYPE:
-      throw new Error('PropertyMirror cannot be serialized independeltly')
+      throw new Error('PropertyMirror cannot be serialized independeltly');
       break;
 
     case FRAME_TYPE:
@@ -2116,7 +2187,7 @@ JSONProtocolSerializer.prototype.serialize_ = function(mirror, reference,
           mirror.evalFromScript()) {
         content.evalFromScript =
             this.serializeReference(mirror.evalFromScript());
-        var evalFromLocation = mirror.evalFromLocation()
+        var evalFromLocation = mirror.evalFromLocation();
         if (evalFromLocation) {
           content.evalFromLocation = { line: evalFromLocation.line,
                                        column: evalFromLocation.column };
@@ -2137,10 +2208,10 @@ JSONProtocolSerializer.prototype.serialize_ = function(mirror, reference,
 
   // Always add the text representation.
   content.text = mirror.toText();
-  
+
   // Create and return the JSON string.
   return content;
-}
+};
 
 
 /**
@@ -2170,7 +2241,7 @@ JSONProtocolSerializer.prototype.serializeObject_ = function(mirror, content,
   if (mirror.hasIndexedInterceptor()) {
     content.indexedInterceptor = true;
   }
-  
+
   // Add function specific properties.
   if (mirror.isFunction()) {
     // Add function specific properties.
@@ -2185,7 +2256,7 @@ JSONProtocolSerializer.prototype.serializeObject_ = function(mirror, content,
     if (mirror.script()) {
       content.script = this.serializeReference(mirror.script());
       content.scriptId = mirror.script().id();
-      
+
       serializeLocationFields(mirror.sourceLocation(), content);
     }
   }
@@ -2215,7 +2286,7 @@ JSONProtocolSerializer.prototype.serializeObject_ = function(mirror, content,
     }
   }
   content.properties = p;
-}
+};
 
 
 /**
@@ -2224,13 +2295,13 @@ JSONProtocolSerializer.prototype.serializeObject_ = function(mirror, content,
  *   "position":"<position>",
  *   "line":"<line>",
  *   "column":"<column>",
- * 
+ *
  * @param {SourceLocation} location The location to serialize, may be undefined.
  */
 function serializeLocationFields (location, content) {
   if (!location) {
     return;
-  }                                                                     
+  }
   content.position = location.position;
   var line = location.line;
   if (!IS_UNDEFINED(line)) {
@@ -2264,7 +2335,7 @@ function serializeLocationFields (location, content) {
  */
 JSONProtocolSerializer.prototype.serializeProperty_ = function(propertyMirror) {
   var result = {};
-  
+
   result.name = propertyMirror.name();
   var propertyValue = propertyMirror.value();
   if (this.inlineRefs_() && propertyValue.isValue()) {
@@ -2279,7 +2350,7 @@ JSONProtocolSerializer.prototype.serializeProperty_ = function(propertyMirror) {
     result.ref = propertyValue.handle();
   }
   return result;
-}
+};
 
 
 JSONProtocolSerializer.prototype.serializeFrame_ = function(mirror, content) {
@@ -2291,11 +2362,15 @@ JSONProtocolSerializer.prototype.serializeFrame_ = function(mirror, content) {
     content.script = this.serializeReference(func.script());
   }
   content.constructCall = mirror.isConstructCall();
+  content.atReturn = mirror.isAtReturn();
+  if (mirror.isAtReturn()) {
+    content.returnValue = this.serializeReference(mirror.returnValue());
+  }
   content.debuggerFrame = mirror.isDebuggerFrame();
   var x = new Array(mirror.argumentCount());
   for (var i = 0; i < mirror.argumentCount(); i++) {
     var arg = {};
-    var argument_name = mirror.argumentName(i)
+    var argument_name = mirror.argumentName(i);
     if (argument_name) {
       arg.name = argument_name;
     }
@@ -2316,7 +2391,7 @@ JSONProtocolSerializer.prototype.serializeFrame_ = function(mirror, content) {
   if (!IS_UNDEFINED(source_line_text)) {
     content.sourceLineText = source_line_text;
   }
-  
+
   content.scopes = [];
   for (var i = 0; i < mirror.scopeCount(); i++) {
     var scope = mirror.scope(i);
@@ -2325,7 +2400,7 @@ JSONProtocolSerializer.prototype.serializeFrame_ = function(mirror, content) {
       index: i
     });
   }
-}
+};
 
 
 JSONProtocolSerializer.prototype.serializeScope_ = function(mirror, content) {
@@ -2335,7 +2410,7 @@ JSONProtocolSerializer.prototype.serializeScope_ = function(mirror, content) {
   content.object = this.inlineRefs_() ?
                    this.serializeValue(mirror.scopeObject()) :
                    this.serializeReference(mirror.scopeObject());
-}
+};
 
 
 /**
@@ -2351,12 +2426,12 @@ function NumberToJSON_(value) {
   if (isNaN(value)) {
     return 'NaN';
   }
-  if (!isFinite(value)) {
+  if (!NUMBER_IS_FINITE(value)) {
     if (value > 0) {
       return 'Infinity';
     } else {
       return '-Infinity';
     }
   }
-  return value; 
+  return value;
 }

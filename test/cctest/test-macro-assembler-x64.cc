@@ -35,46 +35,49 @@
 #include "serialize.h"
 #include "cctest.h"
 
-using v8::internal::byte;
-using v8::internal::OS;
 using v8::internal::Assembler;
+using v8::internal::CodeDesc;
 using v8::internal::Condition;
-using v8::internal::MacroAssembler;
+using v8::internal::FUNCTION_CAST;
 using v8::internal::HandleScope;
-using v8::internal::Operand;
 using v8::internal::Immediate;
-using v8::internal::SmiIndex;
+using v8::internal::Isolate;
 using v8::internal::Label;
+using v8::internal::MacroAssembler;
+using v8::internal::OS;
+using v8::internal::Operand;
 using v8::internal::RelocInfo;
-using v8::internal::rax;
-using v8::internal::rbx;
-using v8::internal::rsi;
-using v8::internal::rdi;
-using v8::internal::rcx;
-using v8::internal::rdx;
-using v8::internal::rbp;
-using v8::internal::rsp;
-using v8::internal::r8;
-using v8::internal::r9;
+using v8::internal::Smi;
+using v8::internal::SmiIndex;
+using v8::internal::byte;
+using v8::internal::carry;
+using v8::internal::greater;
+using v8::internal::greater_equal;
+using v8::internal::kIntSize;
+using v8::internal::kPointerSize;
+using v8::internal::kSmiTagMask;
+using v8::internal::kSmiValueSize;
+using v8::internal::less_equal;
+using v8::internal::negative;
+using v8::internal::not_carry;
+using v8::internal::not_equal;
+using v8::internal::not_zero;
+using v8::internal::positive;
 using v8::internal::r11;
-using v8::internal::r12;  // Remember: r12..r15 are callee save!
 using v8::internal::r13;
 using v8::internal::r14;
 using v8::internal::r15;
-using v8::internal::FUNCTION_CAST;
-using v8::internal::CodeDesc;
-using v8::internal::less_equal;
-using v8::internal::not_equal;
-using v8::internal::not_zero;
-using v8::internal::greater;
-using v8::internal::greater_equal;
-using v8::internal::carry;
-using v8::internal::not_carry;
-using v8::internal::negative;
-using v8::internal::positive;
-using v8::internal::Smi;
-using v8::internal::kSmiTagMask;
-using v8::internal::kSmiValueSize;
+using v8::internal::r8;
+using v8::internal::r9;
+using v8::internal::rax;
+using v8::internal::rbp;
+using v8::internal::rbx;
+using v8::internal::rcx;
+using v8::internal::rdi;
+using v8::internal::rdx;
+using v8::internal::rsi;
+using v8::internal::rsp;
+using v8::internal::times_pointer_size;
 
 // Test the x64 assembler by compiling some simple functions into
 // a buffer and executing them.  These tests do not initialize the
@@ -88,6 +91,27 @@ using v8::internal::kSmiValueSize;
 typedef int (*F0)();
 
 #define __ masm->
+
+
+static void EntryCode(MacroAssembler* masm) {
+  // Smi constant register is callee save.
+  __ push(v8::internal::kSmiConstantRegister);
+  __ push(v8::internal::kRootRegister);
+  __ InitializeSmiConstantRegister();
+  __ InitializeRootRegister();
+}
+
+
+static void ExitCode(MacroAssembler* masm) {
+  // Return -1 if kSmiConstantRegister was clobbered during the test.
+  __ Move(rdx, Smi::FromInt(1));
+  __ cmpq(rdx, v8::internal::kSmiConstantRegister);
+  __ movq(rdx, Immediate(-1));
+  __ cmovq(not_equal, rax, rdx);
+  __ pop(v8::internal::kRootRegister);
+  __ pop(v8::internal::kSmiConstantRegister);
+}
+
 
 TEST(Smi) {
   // Check that C++ Smi operations work as expected.
@@ -126,6 +150,7 @@ static void TestMoveSmi(MacroAssembler* masm, Label* exit, int id, Smi* value) {
 
 // Test that we can move a Smi value literally into a register.
 TEST(SmiMove) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
@@ -133,9 +158,12 @@ TEST(SmiMove) {
                                                    true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
   MacroAssembler* masm = &assembler;  // Create a pointer for the __ macro.
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestMoveSmi(masm, &exit, 1, Smi::FromInt(0));
@@ -153,6 +181,7 @@ TEST(SmiMove) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -198,7 +227,7 @@ void TestSmiCompare(MacroAssembler* masm, Label* exit, int id, int x, int y) {
       __ j(less_equal, exit);
     }
   } else {
-    __ SmiCompare(rcx, rcx);
+    __ cmpq(rcx, rcx);
     __ movl(rax, Immediate(id + 11));
     __ j(not_equal, exit);
     __ incq(rax);
@@ -210,18 +239,22 @@ void TestSmiCompare(MacroAssembler* masm, Label* exit, int id, int x, int y) {
 
 // Test that we can compare smis for equality (and more).
 TEST(SmiCompare) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
-      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
+      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 2,
                                       &actual_size,
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiCompare(masm, &exit, 0x10, 0, 0);
@@ -246,6 +279,7 @@ TEST(SmiCompare) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -258,6 +292,7 @@ TEST(SmiCompare) {
 
 
 TEST(Integer32ToSmi) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
@@ -265,45 +300,48 @@ TEST(Integer32ToSmi) {
                                                  true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   __ movq(rax, Immediate(1));  // Test number.
   __ movl(rcx, Immediate(0));
   __ Integer32ToSmi(rcx, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(0)));
-  __ SmiCompare(rcx, rdx);
+  __ cmpq(rcx, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(2));  // Test number.
   __ movl(rcx, Immediate(1024));
   __ Integer32ToSmi(rcx, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(1024)));
-  __ SmiCompare(rcx, rdx);
+  __ cmpq(rcx, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(3));  // Test number.
   __ movl(rcx, Immediate(-1));
   __ Integer32ToSmi(rcx, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(-1)));
-  __ SmiCompare(rcx, rdx);
+  __ cmpq(rcx, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(4));  // Test number.
   __ movl(rcx, Immediate(Smi::kMaxValue));
   __ Integer32ToSmi(rcx, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(Smi::kMaxValue)));
-  __ SmiCompare(rcx, rdx);
+  __ cmpq(rcx, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(5));  // Test number.
   __ movl(rcx, Immediate(Smi::kMinValue));
   __ Integer32ToSmi(rcx, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(Smi::kMinValue)));
-  __ SmiCompare(rcx, rdx);
+  __ cmpq(rcx, rdx);
   __ j(not_equal, &exit);
 
   // Different target register.
@@ -312,40 +350,41 @@ TEST(Integer32ToSmi) {
   __ movl(rcx, Immediate(0));
   __ Integer32ToSmi(r8, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(0)));
-  __ SmiCompare(r8, rdx);
+  __ cmpq(r8, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(7));  // Test number.
   __ movl(rcx, Immediate(1024));
   __ Integer32ToSmi(r8, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(1024)));
-  __ SmiCompare(r8, rdx);
+  __ cmpq(r8, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(8));  // Test number.
   __ movl(rcx, Immediate(-1));
   __ Integer32ToSmi(r8, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(-1)));
-  __ SmiCompare(r8, rdx);
+  __ cmpq(r8, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(9));  // Test number.
   __ movl(rcx, Immediate(Smi::kMaxValue));
   __ Integer32ToSmi(r8, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(Smi::kMaxValue)));
-  __ SmiCompare(r8, rdx);
+  __ cmpq(r8, rdx);
   __ j(not_equal, &exit);
 
   __ movq(rax, Immediate(10));  // Test number.
   __ movl(rcx, Immediate(Smi::kMinValue));
   __ Integer32ToSmi(r8, rcx);
   __ Set(rdx, reinterpret_cast<intptr_t>(Smi::FromInt(Smi::kMinValue)));
-  __ SmiCompare(r8, rdx);
+  __ cmpq(r8, rdx);
   __ j(not_equal, &exit);
 
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -368,21 +407,22 @@ void TestI64PlusConstantToSmi(MacroAssembler* masm,
   __ movq(rcx, x, RelocInfo::NONE);
   __ movq(r11, rcx);
   __ Integer64PlusConstantToSmi(rdx, rcx, y);
-  __ SmiCompare(rdx, r8);
+  __ cmpq(rdx, r8);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ Integer64PlusConstantToSmi(rcx, rcx, y);
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 }
 
 
 TEST(Integer64PlusConstantToSmi) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
@@ -390,10 +430,13 @@ TEST(Integer64PlusConstantToSmi) {
                                                  true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   int64_t twice_max = static_cast<int64_t>(Smi::kMaxValue) * 2;
@@ -413,6 +456,7 @@ TEST(Integer64PlusConstantToSmi) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -424,6 +468,7 @@ TEST(Integer64PlusConstantToSmi) {
 
 
 TEST(SmiCheck) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
@@ -431,10 +476,13 @@ TEST(SmiCheck) {
                                                    true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
   Condition cond;
 
@@ -490,40 +538,40 @@ TEST(SmiCheck) {
   __ incq(rax);
   __ movl(rcx, Immediate(0));
   __ Integer32ToSmi(rcx, rcx);
-  cond = masm->CheckPositiveSmi(rcx);  // Zero counts as positive.
+  cond = masm->CheckNonNegativeSmi(rcx);
   __ j(NegateCondition(cond), &exit);
 
   __ incq(rax);
   __ xor_(rcx, Immediate(kSmiTagMask));
-  cond = masm->CheckPositiveSmi(rcx);  // "zero" non-smi.
+  cond = masm->CheckNonNegativeSmi(rcx);  // "zero" non-smi.
   __ j(cond, &exit);
 
   __ incq(rax);
   __ movq(rcx, Immediate(-1));
   __ Integer32ToSmi(rcx, rcx);
-  cond = masm->CheckPositiveSmi(rcx);  // Negative smis are not positive.
+  cond = masm->CheckNonNegativeSmi(rcx);  // Negative smis are not positive.
   __ j(cond, &exit);
 
   __ incq(rax);
   __ movq(rcx, Immediate(Smi::kMinValue));
   __ Integer32ToSmi(rcx, rcx);
-  cond = masm->CheckPositiveSmi(rcx);  // Most negative smi is not positive.
+  cond = masm->CheckNonNegativeSmi(rcx);  // Most negative smi is not positive.
   __ j(cond, &exit);
 
   __ incq(rax);
   __ xor_(rcx, Immediate(kSmiTagMask));
-  cond = masm->CheckPositiveSmi(rcx);  // "Negative" non-smi.
+  cond = masm->CheckNonNegativeSmi(rcx);  // "Negative" non-smi.
   __ j(cond, &exit);
 
   __ incq(rax);
   __ movq(rcx, Immediate(Smi::kMaxValue));
   __ Integer32ToSmi(rcx, rcx);
-  cond = masm->CheckPositiveSmi(rcx);  // Most positive smi is positive.
+  cond = masm->CheckNonNegativeSmi(rcx);  // Most positive smi is positive.
   __ j(NegateCondition(cond), &exit);
 
   __ incq(rax);
   __ xor_(rcx, Immediate(kSmiTagMask));
-  cond = masm->CheckPositiveSmi(rcx);  // "Positive" non-smi.
+  cond = masm->CheckNonNegativeSmi(rcx);  // "Positive" non-smi.
   __ j(cond, &exit);
 
   // CheckIsMinSmi
@@ -610,6 +658,7 @@ TEST(SmiCheck) {
   __ xor_(rax, rax);
 
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -630,14 +679,14 @@ void TestSmiNeg(MacroAssembler* masm, Label* exit, int id, int x) {
     __ SmiNeg(r9, rcx, exit);
 
     __ incq(rax);
-    __ SmiCompare(r11, rcx);
+    __ cmpq(r11, rcx);
     __ j(not_equal, exit);
 
     __ incq(rax);
     __ SmiNeg(rcx, rcx, exit);
 
     __ incq(rax);
-    __ SmiCompare(r11, rcx);
+    __ cmpq(r11, rcx);
     __ j(not_equal, exit);
   } else {
     Label smi_ok, smi_ok2;
@@ -649,11 +698,11 @@ void TestSmiNeg(MacroAssembler* masm, Label* exit, int id, int x) {
     __ jmp(exit);
     __ bind(&smi_ok);
     __ incq(rax);
-    __ SmiCompare(r9, r8);
+    __ cmpq(r9, r8);
     __ j(not_equal, exit);
 
     __ incq(rax);
-    __ SmiCompare(r11, rcx);
+    __ cmpq(r11, rcx);
     __ j(not_equal, exit);
 
     __ incq(rax);
@@ -661,13 +710,14 @@ void TestSmiNeg(MacroAssembler* masm, Label* exit, int id, int x) {
     __ jmp(exit);
     __ bind(&smi_ok2);
     __ incq(rax);
-    __ SmiCompare(rcx, r8);
+    __ cmpq(rcx, r8);
     __ j(not_equal, exit);
   }
 }
 
 
 TEST(SmiNeg) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -676,10 +726,13 @@ TEST(SmiNeg) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiNeg(masm, &exit, 0x10, 0);
@@ -693,6 +746,7 @@ TEST(SmiNeg) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -719,12 +773,12 @@ static void SmiAddTest(MacroAssembler* masm,
 
   __ movl(rax, Immediate(id));  // Test number.
   __ SmiAdd(r9, rcx, rdx, exit);
-  __ SmiCompare(r9, r8);
+  __ cmpq(r9, r8);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiAdd(rcx, rcx, rdx, exit);                              \
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 
   __ movl(rcx, Immediate(first));
@@ -732,11 +786,11 @@ static void SmiAddTest(MacroAssembler* masm,
 
   __ incq(rax);
   __ SmiAddConstant(r9, rcx, Smi::FromInt(second));
-  __ SmiCompare(r9, r8);
+  __ cmpq(r9, r8);
   __ j(not_equal, exit);
 
   __ SmiAddConstant(rcx, rcx, Smi::FromInt(second));
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 
   __ movl(rcx, Immediate(first));
@@ -744,16 +798,17 @@ static void SmiAddTest(MacroAssembler* masm,
 
   __ incq(rax);
   __ SmiAddConstant(r9, rcx, Smi::FromInt(second), exit);
-  __ SmiCompare(r9, r8);
+  __ cmpq(r9, r8);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiAddConstant(rcx, rcx, Smi::FromInt(second), exit);
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 }
 
 TEST(SmiAdd) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
@@ -761,10 +816,13 @@ TEST(SmiAdd) {
                                                  true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   // No-overflow tests.
@@ -779,6 +837,7 @@ TEST(SmiAdd) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -800,36 +859,36 @@ static void SmiSubTest(MacroAssembler* masm,
 
   __ movl(rax, Immediate(id));  // Test 0.
   __ SmiSub(r9, rcx, rdx, exit);
-  __ SmiCompare(r9, r8);
+  __ cmpq(r9, r8);
   __ j(not_equal, exit);
 
   __ incq(rax);  // Test 1.
   __ SmiSub(rcx, rcx, rdx, exit);
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 
   __ Move(rcx, Smi::FromInt(first));
 
   __ incq(rax);  // Test 2.
   __ SmiSubConstant(r9, rcx, Smi::FromInt(second));
-  __ SmiCompare(r9, r8);
+  __ cmpq(r9, r8);
   __ j(not_equal, exit);
 
   __ incq(rax);  // Test 3.
   __ SmiSubConstant(rcx, rcx, Smi::FromInt(second));
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 
   __ Move(rcx, Smi::FromInt(first));
 
   __ incq(rax);  // Test 4.
   __ SmiSubConstant(r9, rcx, Smi::FromInt(second), exit);
-  __ SmiCompare(r9, r8);
+  __ cmpq(r9, r8);
   __ j(not_equal, exit);
 
   __ incq(rax);  // Test 5.
   __ SmiSubConstant(rcx, rcx, Smi::FromInt(second), exit);
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 }
 
@@ -852,7 +911,7 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 
@@ -863,7 +922,7 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 
@@ -875,7 +934,7 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 
@@ -886,7 +945,7 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 
@@ -899,7 +958,7 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 
@@ -910,7 +969,7 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 
@@ -922,7 +981,7 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 
@@ -933,13 +992,14 @@ static void SmiSubOverflowTest(MacroAssembler* masm,
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 }
 
 
 TEST(SmiSub) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -948,10 +1008,13 @@ TEST(SmiSub) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   SmiSubTest(masm, &exit, 0x10, 1, 2);
@@ -974,6 +1037,7 @@ TEST(SmiSub) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -996,15 +1060,15 @@ void TestSmiMul(MacroAssembler* masm, Label* exit, int id, int x, int y) {
     __ Move(r8, Smi::FromIntptr(result));
     __ SmiMul(r9, rcx, rdx, exit);
     __ incq(rax);
-    __ SmiCompare(r11, rcx);
+    __ cmpq(r11, rcx);
     __ j(not_equal, exit);
     __ incq(rax);
-    __ SmiCompare(r9, r8);
+    __ cmpq(r9, r8);
     __ j(not_equal, exit);
 
     __ incq(rax);
     __ SmiMul(rcx, rcx, rdx, exit);
-    __ SmiCompare(rcx, r8);
+    __ cmpq(rcx, r8);
     __ j(not_equal, exit);
   } else {
     __ movl(rax, Immediate(id + 8));
@@ -1013,7 +1077,7 @@ void TestSmiMul(MacroAssembler* masm, Label* exit, int id, int x, int y) {
     __ jmp(exit);
     __ bind(&overflow_ok);
     __ incq(rax);
-    __ SmiCompare(r11, rcx);
+    __ cmpq(r11, rcx);
     __ j(not_equal, exit);
     __ incq(rax);
     __ SmiMul(rcx, rcx, rdx, &overflow_ok2);
@@ -1021,13 +1085,14 @@ void TestSmiMul(MacroAssembler* masm, Label* exit, int id, int x, int y) {
     __ bind(&overflow_ok2);
     // 31-bit version doesn't preserve rcx on failure.
     // __ incq(rax);
-    // __ SmiCompare(r11, rcx);
+    // __ cmpq(r11, rcx);
     // __ j(not_equal, exit);
   }
 }
 
 
 TEST(SmiMul) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer = static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize,
@@ -1035,10 +1100,13 @@ TEST(SmiMul) {
                                                  true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiMul(masm, &exit, 0x10, 0, 0);
@@ -1058,6 +1126,7 @@ TEST(SmiMul) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1078,30 +1147,30 @@ void TestSmiDiv(MacroAssembler* masm, Label* exit, int id, int x, int y) {
 #endif
   bool fraction = !division_by_zero && !overflow && (x % y != 0);
   __ Move(r11, Smi::FromInt(x));
-  __ Move(r12, Smi::FromInt(y));
+  __ Move(r14, Smi::FromInt(y));
   if (!fraction && !overflow && !negative_zero && !division_by_zero) {
     // Division succeeds
     __ movq(rcx, r11);
     __ movq(r15, Immediate(id));
     int result = x / y;
     __ Move(r8, Smi::FromInt(result));
-    __ SmiDiv(r9, rcx, r12, exit);
-    // Might have destroyed rcx and r12.
+    __ SmiDiv(r9, rcx, r14, exit);
+    // Might have destroyed rcx and r14.
     __ incq(r15);
-    __ SmiCompare(r9, r8);
+    __ cmpq(r9, r8);
     __ j(not_equal, exit);
 
     __ incq(r15);
     __ movq(rcx, r11);
-    __ Move(r12, Smi::FromInt(y));
-    __ SmiCompare(rcx, r11);
+    __ Move(r14, Smi::FromInt(y));
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
 
     __ incq(r15);
-    __ SmiDiv(rcx, rcx, r12, exit);
+    __ SmiDiv(rcx, rcx, r14, exit);
 
     __ incq(r15);
-    __ SmiCompare(rcx, r8);
+    __ cmpq(rcx, r8);
     __ j(not_equal, exit);
   } else {
     // Division fails.
@@ -1109,27 +1178,28 @@ void TestSmiDiv(MacroAssembler* masm, Label* exit, int id, int x, int y) {
 
     Label fail_ok, fail_ok2;
     __ movq(rcx, r11);
-    __ SmiDiv(r9, rcx, r12, &fail_ok);
+    __ SmiDiv(r9, rcx, r14, &fail_ok);
     __ jmp(exit);
     __ bind(&fail_ok);
 
     __ incq(r15);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
 
     __ incq(r15);
-    __ SmiDiv(rcx, rcx, r12, &fail_ok2);
+    __ SmiDiv(rcx, rcx, r14, &fail_ok2);
     __ jmp(exit);
     __ bind(&fail_ok2);
 
     __ incq(r15);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 }
 
 
 TEST(SmiDiv) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -1138,13 +1208,16 @@ TEST(SmiDiv) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
-  __ push(r12);
+  __ push(r14);
   __ push(r15);
   TestSmiDiv(masm, &exit, 0x10, 1, 1);
   TestSmiDiv(masm, &exit, 0x20, 1, 0);
@@ -1171,7 +1244,8 @@ TEST(SmiDiv) {
   __ bind(&exit);
   __ movq(rax, r15);
   __ pop(r15);
-  __ pop(r12);
+  __ pop(r14);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1189,54 +1263,55 @@ void TestSmiMod(MacroAssembler* masm, Label* exit, int id, int x, int y) {
   bool negative_zero = (!fraction && x < 0);
   __ Move(rcx, Smi::FromInt(x));
   __ movq(r11, rcx);
-  __ Move(r12, Smi::FromInt(y));
+  __ Move(r14, Smi::FromInt(y));
   if (!division_overflow && !negative_zero && !division_by_zero) {
     // Modulo succeeds
     __ movq(r15, Immediate(id));
     int result = x % y;
     __ Move(r8, Smi::FromInt(result));
-    __ SmiMod(r9, rcx, r12, exit);
+    __ SmiMod(r9, rcx, r14, exit);
 
     __ incq(r15);
-    __ SmiCompare(r9, r8);
+    __ cmpq(r9, r8);
     __ j(not_equal, exit);
 
     __ incq(r15);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
 
     __ incq(r15);
-    __ SmiMod(rcx, rcx, r12, exit);
+    __ SmiMod(rcx, rcx, r14, exit);
 
     __ incq(r15);
-    __ SmiCompare(rcx, r8);
+    __ cmpq(rcx, r8);
     __ j(not_equal, exit);
   } else {
     // Modulo fails.
     __ movq(r15, Immediate(id + 8));
 
     Label fail_ok, fail_ok2;
-    __ SmiMod(r9, rcx, r12, &fail_ok);
+    __ SmiMod(r9, rcx, r14, &fail_ok);
     __ jmp(exit);
     __ bind(&fail_ok);
 
     __ incq(r15);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
 
     __ incq(r15);
-    __ SmiMod(rcx, rcx, r12, &fail_ok2);
+    __ SmiMod(rcx, rcx, r14, &fail_ok2);
     __ jmp(exit);
     __ bind(&fail_ok2);
 
     __ incq(r15);
-    __ SmiCompare(rcx, r11);
+    __ cmpq(rcx, r11);
     __ j(not_equal, exit);
   }
 }
 
 
 TEST(SmiMod) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -1245,13 +1320,16 @@ TEST(SmiMod) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
-  __ push(r12);
+  __ push(r14);
   __ push(r15);
   TestSmiMod(masm, &exit, 0x10, 1, 1);
   TestSmiMod(masm, &exit, 0x20, 1, 0);
@@ -1278,7 +1356,8 @@ TEST(SmiMod) {
   __ bind(&exit);
   __ movq(rax, r15);
   __ pop(r15);
-  __ pop(r12);
+  __ pop(r14);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1298,7 +1377,7 @@ void TestSmiIndex(MacroAssembler* masm, Label* exit, int id, int x) {
     ASSERT(index.reg.is(rcx) || index.reg.is(rdx));
     __ shl(index.reg, Immediate(index.scale));
     __ Set(r8, static_cast<intptr_t>(x) << i);
-    __ SmiCompare(index.reg, r8);
+    __ cmpq(index.reg, r8);
     __ j(not_equal, exit);
     __ incq(rax);
     __ Move(rcx, Smi::FromInt(x));
@@ -1306,7 +1385,7 @@ void TestSmiIndex(MacroAssembler* masm, Label* exit, int id, int x) {
     ASSERT(index.reg.is(rcx));
     __ shl(rcx, Immediate(index.scale));
     __ Set(r8, static_cast<intptr_t>(x) << i);
-    __ SmiCompare(rcx, r8);
+    __ cmpq(rcx, r8);
     __ j(not_equal, exit);
     __ incq(rax);
 
@@ -1315,7 +1394,7 @@ void TestSmiIndex(MacroAssembler* masm, Label* exit, int id, int x) {
     ASSERT(index.reg.is(rcx) || index.reg.is(rdx));
     __ shl(index.reg, Immediate(index.scale));
     __ Set(r8, static_cast<intptr_t>(-x) << i);
-    __ SmiCompare(index.reg, r8);
+    __ cmpq(index.reg, r8);
     __ j(not_equal, exit);
     __ incq(rax);
     __ Move(rcx, Smi::FromInt(x));
@@ -1323,25 +1402,29 @@ void TestSmiIndex(MacroAssembler* masm, Label* exit, int id, int x) {
     ASSERT(index.reg.is(rcx));
     __ shl(rcx, Immediate(index.scale));
     __ Set(r8, static_cast<intptr_t>(-x) << i);
-    __ SmiCompare(rcx, r8);
+    __ cmpq(rcx, r8);
     __ j(not_equal, exit);
     __ incq(rax);
   }
 }
 
 TEST(SmiIndex) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
-      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 2,
+      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 3,
                                       &actual_size,
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiIndex(masm, &exit, 0x10, 0);
@@ -1352,6 +1435,7 @@ TEST(SmiIndex) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1370,7 +1454,7 @@ void TestSelectNonSmi(MacroAssembler* masm, Label* exit, int id, int x, int y) {
   __ SelectNonSmi(r9, rcx, rdx, exit);
 
   __ incq(rax);
-  __ SmiCompare(r9, rdx);
+  __ cmpq(r9, rdx);
   __ j(not_equal, exit);
 
   __ incq(rax);
@@ -1380,7 +1464,7 @@ void TestSelectNonSmi(MacroAssembler* masm, Label* exit, int id, int x, int y) {
   __ SelectNonSmi(r9, rcx, rdx, exit);
 
   __ incq(rax);
-  __ SmiCompare(r9, rcx);
+  __ cmpq(r9, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
@@ -1396,6 +1480,7 @@ void TestSelectNonSmi(MacroAssembler* masm, Label* exit, int id, int x, int y) {
 
 
 TEST(SmiSelectNonSmi) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -1404,10 +1489,13 @@ TEST(SmiSelectNonSmi) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);  // Avoid inline checks.
+  EntryCode(masm);
   Label exit;
 
   TestSelectNonSmi(masm, &exit, 0x10, 0, 0);
@@ -1422,6 +1510,7 @@ TEST(SmiSelectNonSmi) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1442,36 +1531,37 @@ void TestSmiAnd(MacroAssembler* masm, Label* exit, int id, int x, int y) {
   __ Move(rdx, Smi::FromInt(y));
   __ Move(r8, Smi::FromInt(result));
   __ SmiAnd(r9, rcx, rdx);
-  __ SmiCompare(r8, r9);
+  __ cmpq(r8, r9);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiAnd(rcx, rcx, rdx);
-  __ SmiCompare(r8, rcx);
+  __ cmpq(r8, rcx);
   __ j(not_equal, exit);
 
   __ movq(rcx, r11);
   __ incq(rax);
   __ SmiAndConstant(r9, rcx, Smi::FromInt(y));
-  __ SmiCompare(r8, r9);
+  __ cmpq(r8, r9);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiAndConstant(rcx, rcx, Smi::FromInt(y));
-  __ SmiCompare(r8, rcx);
+  __ cmpq(r8, rcx);
   __ j(not_equal, exit);
 }
 
 
 TEST(SmiAnd) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -1480,10 +1570,13 @@ TEST(SmiAnd) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiAnd(masm, &exit, 0x10, 0, 0);
@@ -1500,6 +1593,7 @@ TEST(SmiAnd) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1520,36 +1614,37 @@ void TestSmiOr(MacroAssembler* masm, Label* exit, int id, int x, int y) {
   __ Move(rdx, Smi::FromInt(y));
   __ Move(r8, Smi::FromInt(result));
   __ SmiOr(r9, rcx, rdx);
-  __ SmiCompare(r8, r9);
+  __ cmpq(r8, r9);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiOr(rcx, rcx, rdx);
-  __ SmiCompare(r8, rcx);
+  __ cmpq(r8, rcx);
   __ j(not_equal, exit);
 
   __ movq(rcx, r11);
   __ incq(rax);
   __ SmiOrConstant(r9, rcx, Smi::FromInt(y));
-  __ SmiCompare(r8, r9);
+  __ cmpq(r8, r9);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiOrConstant(rcx, rcx, Smi::FromInt(y));
-  __ SmiCompare(r8, rcx);
+  __ cmpq(r8, rcx);
   __ j(not_equal, exit);
 }
 
 
 TEST(SmiOr) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -1558,10 +1653,13 @@ TEST(SmiOr) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiOr(masm, &exit, 0x10, 0, 0);
@@ -1580,6 +1678,7 @@ TEST(SmiOr) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1600,36 +1699,37 @@ void TestSmiXor(MacroAssembler* masm, Label* exit, int id, int x, int y) {
   __ Move(rdx, Smi::FromInt(y));
   __ Move(r8, Smi::FromInt(result));
   __ SmiXor(r9, rcx, rdx);
-  __ SmiCompare(r8, r9);
+  __ cmpq(r8, r9);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiXor(rcx, rcx, rdx);
-  __ SmiCompare(r8, rcx);
+  __ cmpq(r8, rcx);
   __ j(not_equal, exit);
 
   __ movq(rcx, r11);
   __ incq(rax);
   __ SmiXorConstant(r9, rcx, Smi::FromInt(y));
-  __ SmiCompare(r8, r9);
+  __ cmpq(r8, r9);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiXorConstant(rcx, rcx, Smi::FromInt(y));
-  __ SmiCompare(r8, rcx);
+  __ cmpq(r8, rcx);
   __ j(not_equal, exit);
 }
 
 
 TEST(SmiXor) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -1638,10 +1738,13 @@ TEST(SmiXor) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiXor(masm, &exit, 0x10, 0, 0);
@@ -1660,6 +1763,7 @@ TEST(SmiXor) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1679,21 +1783,22 @@ void TestSmiNot(MacroAssembler* masm, Label* exit, int id, int x) {
   __ movq(r11, rcx);
 
   __ SmiNot(r9, rcx);
-  __ SmiCompare(r9, r8);
+  __ cmpq(r9, r8);
   __ j(not_equal, exit);
 
   __ incq(rax);
-  __ SmiCompare(r11, rcx);
+  __ cmpq(r11, rcx);
   __ j(not_equal, exit);
 
   __ incq(rax);
   __ SmiNot(rcx, rcx);
-  __ SmiCompare(rcx, r8);
+  __ cmpq(rcx, r8);
   __ j(not_equal, exit);
 }
 
 
 TEST(SmiNot) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -1702,10 +1807,13 @@ TEST(SmiNot) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiNot(masm, &exit, 0x10, 0);
@@ -1719,6 +1827,7 @@ TEST(SmiNot) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1737,116 +1846,72 @@ void TestSmiShiftLeft(MacroAssembler* masm, Label* exit, int id, int x) {
     // rax == id + i * 10.
     int shift = shifts[i];
     int result = x << shift;
-    if (Smi::IsValid(result)) {
-      __ Move(r8, Smi::FromInt(result));
-      __ Move(rcx, Smi::FromInt(x));
-      __ SmiShiftLeftConstant(r9, rcx, shift, exit);
+    CHECK(Smi::IsValid(result));
+    __ Move(r8, Smi::FromInt(result));
+    __ Move(rcx, Smi::FromInt(x));
+    __ SmiShiftLeftConstant(r9, rcx, shift);
 
-      __ incq(rax);
-      __ SmiCompare(r9, r8);
-      __ j(not_equal, exit);
+    __ incq(rax);
+    __ cmpq(r9, r8);
+    __ j(not_equal, exit);
 
-      __ incq(rax);
-      __ Move(rcx, Smi::FromInt(x));
-      __ SmiShiftLeftConstant(rcx, rcx, shift, exit);
+    __ incq(rax);
+    __ Move(rcx, Smi::FromInt(x));
+    __ SmiShiftLeftConstant(rcx, rcx, shift);
 
-      __ incq(rax);
-      __ SmiCompare(rcx, r8);
-      __ j(not_equal, exit);
+    __ incq(rax);
+    __ cmpq(rcx, r8);
+    __ j(not_equal, exit);
 
-      __ incq(rax);
-      __ Move(rdx, Smi::FromInt(x));
-      __ Move(rcx, Smi::FromInt(shift));
-      __ SmiShiftLeft(r9, rdx, rcx, exit);
+    __ incq(rax);
+    __ Move(rdx, Smi::FromInt(x));
+    __ Move(rcx, Smi::FromInt(shift));
+    __ SmiShiftLeft(r9, rdx, rcx);
 
-      __ incq(rax);
-      __ SmiCompare(r9, r8);
-      __ j(not_equal, exit);
+    __ incq(rax);
+    __ cmpq(r9, r8);
+    __ j(not_equal, exit);
 
-      __ incq(rax);
-      __ Move(rdx, Smi::FromInt(x));
-      __ Move(r11, Smi::FromInt(shift));
-      __ SmiShiftLeft(r9, rdx, r11, exit);
+    __ incq(rax);
+    __ Move(rdx, Smi::FromInt(x));
+    __ Move(r11, Smi::FromInt(shift));
+    __ SmiShiftLeft(r9, rdx, r11);
 
-      __ incq(rax);
-      __ SmiCompare(r9, r8);
-      __ j(not_equal, exit);
+    __ incq(rax);
+    __ cmpq(r9, r8);
+    __ j(not_equal, exit);
 
-      __ incq(rax);
-      __ Move(rdx, Smi::FromInt(x));
-      __ Move(r11, Smi::FromInt(shift));
-      __ SmiShiftLeft(rdx, rdx, r11, exit);
+    __ incq(rax);
+    __ Move(rdx, Smi::FromInt(x));
+    __ Move(r11, Smi::FromInt(shift));
+    __ SmiShiftLeft(rdx, rdx, r11);
 
-      __ incq(rax);
-      __ SmiCompare(rdx, r8);
-      __ j(not_equal, exit);
+    __ incq(rax);
+    __ cmpq(rdx, r8);
+    __ j(not_equal, exit);
 
-      __ incq(rax);
-    } else {
-      // Cannot happen with long smis.
-      Label fail_ok;
-      __ Move(rcx, Smi::FromInt(x));
-      __ movq(r11, rcx);
-      __ SmiShiftLeftConstant(r9, rcx, shift, &fail_ok);
-      __ jmp(exit);
-      __ bind(&fail_ok);
-
-      __ incq(rax);
-      __ SmiCompare(rcx, r11);
-      __ j(not_equal, exit);
-
-      __ incq(rax);
-      Label fail_ok2;
-      __ SmiShiftLeftConstant(rcx, rcx, shift, &fail_ok2);
-      __ jmp(exit);
-      __ bind(&fail_ok2);
-
-      __ incq(rax);
-      __ SmiCompare(rcx, r11);
-      __ j(not_equal, exit);
-
-      __ incq(rax);
-      __ Move(r8, Smi::FromInt(shift));
-      Label fail_ok3;
-      __ SmiShiftLeft(r9, rcx, r8, &fail_ok3);
-      __ jmp(exit);
-      __ bind(&fail_ok3);
-
-      __ incq(rax);
-      __ SmiCompare(rcx, r11);
-      __ j(not_equal, exit);
-
-      __ incq(rax);
-      __ Move(r8, Smi::FromInt(shift));
-      __ movq(rdx, r11);
-      Label fail_ok4;
-      __ SmiShiftLeft(rdx, rdx, r8, &fail_ok4);
-      __ jmp(exit);
-      __ bind(&fail_ok4);
-
-      __ incq(rax);
-      __ SmiCompare(rdx, r11);
-      __ j(not_equal, exit);
-
-      __ addq(rax, Immediate(3));
-    }
+    __ incq(rax);
   }
 }
 
 
 TEST(SmiShiftLeft) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
-      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 3,
+      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 4,
                                       &actual_size,
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiShiftLeft(masm, &exit, 0x10, 0);
@@ -1859,6 +1924,7 @@ TEST(SmiShiftLeft) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1885,7 +1951,7 @@ void TestSmiShiftLogicalRight(MacroAssembler* masm,
       __ SmiShiftLogicalRightConstant(r9, rcx, shift, exit);
 
       __ incq(rax);
-      __ SmiCompare(r9, r8);
+      __ cmpq(r9, r8);
       __ j(not_equal, exit);
 
       __ incq(rax);
@@ -1894,7 +1960,7 @@ void TestSmiShiftLogicalRight(MacroAssembler* masm,
       __ SmiShiftLogicalRight(r9, rdx, rcx, exit);
 
       __ incq(rax);
-      __ SmiCompare(r9, r8);
+      __ cmpq(r9, r8);
       __ j(not_equal, exit);
 
       __ incq(rax);
@@ -1903,7 +1969,7 @@ void TestSmiShiftLogicalRight(MacroAssembler* masm,
       __ SmiShiftLogicalRight(r9, rdx, r11, exit);
 
       __ incq(rax);
-      __ SmiCompare(r9, r8);
+      __ cmpq(r9, r8);
       __ j(not_equal, exit);
 
       __ incq(rax);
@@ -1917,7 +1983,7 @@ void TestSmiShiftLogicalRight(MacroAssembler* masm,
       __ bind(&fail_ok);
 
       __ incq(rax);
-      __ SmiCompare(rcx, r11);
+      __ cmpq(rcx, r11);
       __ j(not_equal, exit);
 
       __ incq(rax);
@@ -1928,7 +1994,7 @@ void TestSmiShiftLogicalRight(MacroAssembler* masm,
       __ bind(&fail_ok3);
 
       __ incq(rax);
-      __ SmiCompare(rcx, r11);
+      __ cmpq(rcx, r11);
       __ j(not_equal, exit);
 
       __ addq(rax, Immediate(3));
@@ -1938,18 +2004,22 @@ void TestSmiShiftLogicalRight(MacroAssembler* masm,
 
 
 TEST(SmiShiftLogicalRight) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
-      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 2,
+      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 3,
                                       &actual_size,
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiShiftLogicalRight(masm, &exit, 0x10, 0);
@@ -1962,6 +2032,7 @@ TEST(SmiShiftLogicalRight) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -1987,7 +2058,7 @@ void TestSmiShiftArithmeticRight(MacroAssembler* masm,
     __ Move(rcx, Smi::FromInt(x));
     __ SmiShiftArithmeticRightConstant(rcx, rcx, shift);
 
-    __ SmiCompare(rcx, r8);
+    __ cmpq(rcx, r8);
     __ j(not_equal, exit);
 
     __ incq(rax);
@@ -1995,7 +2066,7 @@ void TestSmiShiftArithmeticRight(MacroAssembler* masm,
     __ Move(r11, Smi::FromInt(shift));
     __ SmiShiftArithmeticRight(rdx, rdx, r11);
 
-    __ SmiCompare(rdx, r8);
+    __ cmpq(rdx, r8);
     __ j(not_equal, exit);
 
     __ incq(rax);
@@ -2004,6 +2075,7 @@ void TestSmiShiftArithmeticRight(MacroAssembler* masm,
 
 
 TEST(SmiShiftArithmeticRight) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
@@ -2012,10 +2084,13 @@ TEST(SmiShiftArithmeticRight) {
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestSmiShiftArithmeticRight(masm, &exit, 0x10, 0);
@@ -2028,6 +2103,7 @@ TEST(SmiShiftArithmeticRight) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -2050,14 +2126,14 @@ void TestPositiveSmiPowerUp(MacroAssembler* masm, Label* exit, int id, int x) {
     __ Move(rcx, Smi::FromInt(x));
     __ movq(r11, rcx);
     __ PositiveSmiTimesPowerOfTwoToInteger64(rdx, rcx, power);
-    __ SmiCompare(rdx, r8);
+    __ cmpq(rdx, r8);
     __ j(not_equal, exit);
     __ incq(rax);
-    __ SmiCompare(r11, rcx);  // rcx unchanged.
+    __ cmpq(r11, rcx);  // rcx unchanged.
     __ j(not_equal, exit);
     __ incq(rax);
     __ PositiveSmiTimesPowerOfTwoToInteger64(rcx, rcx, power);
-    __ SmiCompare(rdx, r8);
+    __ cmpq(rdx, r8);
     __ j(not_equal, exit);
     __ incq(rax);
   }
@@ -2065,18 +2141,22 @@ void TestPositiveSmiPowerUp(MacroAssembler* masm, Label* exit, int id, int x) {
 
 
 TEST(PositiveSmiTimesPowerOfTwoToInteger64) {
+  v8::internal::V8::Initialize(NULL);
   // Allocate an executable page of memory.
   size_t actual_size;
   byte* buffer =
-      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 2,
+      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 4,
                                       &actual_size,
                                       true));
   CHECK(buffer);
   HandleScope handles;
-  MacroAssembler assembler(buffer, static_cast<int>(actual_size));
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
 
   MacroAssembler* masm = &assembler;
   masm->set_allow_stub_calls(false);
+  EntryCode(masm);
   Label exit;
 
   TestPositiveSmiPowerUp(masm, &exit, 0x20, 0);
@@ -2091,6 +2171,7 @@ TEST(PositiveSmiTimesPowerOfTwoToInteger64) {
 
   __ xor_(rax, rax);  // Success.
   __ bind(&exit);
+  ExitCode(masm);
   __ ret(0);
 
   CodeDesc desc;
@@ -2099,6 +2180,365 @@ TEST(PositiveSmiTimesPowerOfTwoToInteger64) {
   int result = FUNCTION_CAST<F0>(buffer)();
   CHECK_EQ(0, result);
 }
+
+
+TEST(OperandOffset) {
+  v8::internal::V8::Initialize(NULL);
+  int data[256];
+  for (int i = 0; i < 256; i++) { data[i] = i * 0x01010101; }
+
+  // Allocate an executable page of memory.
+  size_t actual_size;
+  byte* buffer =
+      static_cast<byte*>(OS::Allocate(Assembler::kMinimalBufferSize * 2,
+                                      &actual_size,
+                                      true));
+  CHECK(buffer);
+  HandleScope handles;
+  MacroAssembler assembler(Isolate::Current(),
+                           buffer,
+                           static_cast<int>(actual_size));
+
+  MacroAssembler* masm = &assembler;
+  masm->set_allow_stub_calls(false);
+  Label exit;
+
+  EntryCode(masm);
+  __ push(r13);
+  __ push(r14);
+  __ push(rbx);
+  __ push(rbp);
+  __ push(Immediate(0x100));  // <-- rbp
+  __ movq(rbp, rsp);
+  __ push(Immediate(0x101));
+  __ push(Immediate(0x102));
+  __ push(Immediate(0x103));
+  __ push(Immediate(0x104));
+  __ push(Immediate(0x105));  // <-- rbx
+  __ push(Immediate(0x106));
+  __ push(Immediate(0x107));
+  __ push(Immediate(0x108));
+  __ push(Immediate(0x109));  // <-- rsp
+  // rbp = rsp[9]
+  // r15 = rsp[3]
+  // rbx = rsp[5]
+  // r13 = rsp[7]
+  __ lea(r14, Operand(rsp, 3 * kPointerSize));
+  __ lea(r13, Operand(rbp, -3 * kPointerSize));
+  __ lea(rbx, Operand(rbp, -5 * kPointerSize));
+  __ movl(rcx, Immediate(2));
+  __ movq(r8, reinterpret_cast<uintptr_t>(&data[128]), RelocInfo::NONE);
+  __ movl(rax, Immediate(1));
+
+  Operand sp0 = Operand(rsp, 0);
+
+  // Test 1.
+  __ movl(rdx, sp0);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x109));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Test 2.
+  // Zero to non-zero displacement.
+  __ movl(rdx, Operand(sp0, 2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x107));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand sp2 = Operand(rsp, 2 * kPointerSize);
+
+  // Test 3.
+  __ movl(rdx, sp2);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x107));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(sp2, 2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x105));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Non-zero to zero displacement.
+  __ movl(rdx, Operand(sp2, -2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x109));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand sp2c2 = Operand(rsp, rcx, times_pointer_size, 2 * kPointerSize);
+
+  // Test 6.
+  __ movl(rdx, sp2c2);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x105));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(sp2c2, 2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x103));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Non-zero to zero displacement.
+  __ movl(rdx, Operand(sp2c2, -2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x107));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+
+  Operand bp0 = Operand(rbp, 0);
+
+  // Test 9.
+  __ movl(rdx, bp0);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x100));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Zero to non-zero displacement.
+  __ movl(rdx, Operand(bp0, -2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x102));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand bp2 = Operand(rbp, -2 * kPointerSize);
+
+  // Test 11.
+  __ movl(rdx, bp2);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x102));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Non-zero to zero displacement.
+  __ movl(rdx, Operand(bp2, 2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x100));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bp2, -2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x104));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand bp2c4 = Operand(rbp, rcx, times_pointer_size, -4 * kPointerSize);
+
+  // Test 14:
+  __ movl(rdx, bp2c4);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x102));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bp2c4, 2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x100));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bp2c4, -2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x104));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand bx0 = Operand(rbx, 0);
+
+  // Test 17.
+  __ movl(rdx, bx0);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x105));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bx0, 5 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x100));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bx0, -4 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x109));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand bx2 = Operand(rbx, 2 * kPointerSize);
+
+  // Test 20.
+  __ movl(rdx, bx2);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x103));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bx2, 2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x101));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Non-zero to zero displacement.
+  __ movl(rdx, Operand(bx2, -2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x105));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand bx2c2 = Operand(rbx, rcx, times_pointer_size, -2 * kPointerSize);
+
+  // Test 23.
+  __ movl(rdx, bx2c2);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x105));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bx2c2, 2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x103));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(bx2c2, -2 * kPointerSize));
+  __ cmpl(rdx, Immediate(0x107));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand r80 = Operand(r8, 0);
+
+  // Test 26.
+  __ movl(rdx, r80);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x80808080));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, -8 * kIntSize));
+  __ cmpl(rdx, Immediate(0x78787878));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, 8 * kIntSize));
+  __ cmpl(rdx, Immediate(0x88888888));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, -64 * kIntSize));
+  __ cmpl(rdx, Immediate(0x40404040));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, 64 * kIntSize));
+  __ cmpl(rdx, Immediate(0xC0C0C0C0));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  Operand r88 = Operand(r8, 8 * kIntSize);
+
+  // Test 31.
+  __ movl(rdx, r88);  // Sanity check.
+  __ cmpl(rdx, Immediate(0x88888888));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r88, -8 * kIntSize));
+  __ cmpl(rdx, Immediate(0x80808080));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r88, 8 * kIntSize));
+  __ cmpl(rdx, Immediate(0x90909090));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r88, -64 * kIntSize));
+  __ cmpl(rdx, Immediate(0x48484848));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r88, 64 * kIntSize));
+  __ cmpl(rdx, Immediate(0xC8C8C8C8));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+
+  Operand r864 = Operand(r8, 64 * kIntSize);
+
+  // Test 36.
+  __ movl(rdx, r864);  // Sanity check.
+  __ cmpl(rdx, Immediate(0xC0C0C0C0));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r864, -8 * kIntSize));
+  __ cmpl(rdx, Immediate(0xB8B8B8B8));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r864, 8 * kIntSize));
+  __ cmpl(rdx, Immediate(0xC8C8C8C8));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r864, -64 * kIntSize));
+  __ cmpl(rdx, Immediate(0x80808080));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r864, 32 * kIntSize));
+  __ cmpl(rdx, Immediate(0xE0E0E0E0));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // 32-bit offset to 8-bit offset.
+  __ movl(rdx, Operand(r864, -60 * kIntSize));
+  __ cmpl(rdx, Immediate(0x84848484));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r864, 60 * kIntSize));
+  __ cmpl(rdx, Immediate(0xFCFCFCFC));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Test unaligned offsets.
+
+  // Test 43.
+  __ movl(rdx, Operand(r80, 2));
+  __ cmpl(rdx, Immediate(0x81818080));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, -2));
+  __ cmpl(rdx, Immediate(0x80807F7F));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, 126));
+  __ cmpl(rdx, Immediate(0xA0A09F9F));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, -126));
+  __ cmpl(rdx, Immediate(0x61616060));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, 254));
+  __ cmpl(rdx, Immediate(0xC0C0BFBF));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  __ movl(rdx, Operand(r80, -254));
+  __ cmpl(rdx, Immediate(0x41414040));
+  __ j(not_equal, &exit);
+  __ incq(rax);
+
+  // Success.
+
+  __ movl(rax, Immediate(0));
+  __ bind(&exit);
+  __ lea(rsp, Operand(rbp, kPointerSize));
+  __ pop(rbp);
+  __ pop(rbx);
+  __ pop(r14);
+  __ pop(r13);
+  ExitCode(masm);
+  __ ret(0);
+
+
+  CodeDesc desc;
+  masm->GetCode(&desc);
+  // Call the function from C++.
+  int result = FUNCTION_CAST<F0>(buffer)();
+  CHECK_EQ(0, result);
+}
+
 
 
 #undef __

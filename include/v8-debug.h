@@ -76,7 +76,8 @@ enum DebugEvent {
   NewFunction = 3,
   BeforeCompile = 4,
   AfterCompile  = 5,
-  ScriptCollected = 6
+  ScriptCollected = 6,
+  BreakForCommand = 7
 };
 
 
@@ -126,7 +127,7 @@ class EXPORT Debug {
     /**
      * Get the context active when the debug event happened. Note this is not
      * the current active context as the JavaScript part of the debugger is
-     * running in it's own context which is entered at this point.
+     * running in its own context which is entered at this point.
      */
     virtual Handle<Context> GetEventContext() const = 0;
 
@@ -141,7 +142,48 @@ class EXPORT Debug {
 
     virtual ~Message() {}
   };
-  
+
+
+  /**
+   * An event details object passed to the debug event listener.
+   */
+  class EventDetails {
+   public:
+    /**
+     * Event type.
+     */
+    virtual DebugEvent GetEvent() const = 0;
+
+    /**
+     * Access to execution state and event data of the debug event. Don't store
+     * these cross callbacks as their content becomes invalid.
+     */
+    virtual Handle<Object> GetExecutionState() const = 0;
+    virtual Handle<Object> GetEventData() const = 0;
+
+    /**
+     * Get the context active when the debug event happened. Note this is not
+     * the current active context as the JavaScript part of the debugger is
+     * running in its own context which is entered at this point.
+     */
+    virtual Handle<Context> GetEventContext() const = 0;
+
+    /**
+     * Client data passed with the corresponding callback when it was
+     * registered.
+     */
+    virtual Handle<Value> GetCallbackData() const = 0;
+
+    /**
+     * Client data passed to DebugBreakForCommand function. The
+     * debugger takes ownership of the data and will delete it even if
+     * there is no message handler.
+     */
+    virtual ClientData* GetClientData() const = 0;
+
+    virtual ~EventDetails() {}
+  };
+
 
   /**
    * Debug event callback function.
@@ -157,6 +199,15 @@ class EXPORT Debug {
                                 Handle<Object> event_data,
                                 Handle<Value> data);
 
+  /**
+   * Debug event callback function.
+   *
+   * \param event_details object providing information about the debug event
+   *
+   * A EventCallback2 does not take possession of the event data,
+   * and must not rely on the data persisting after the handler returns.
+   */
+  typedef void (*EventCallback2)(const EventDetails& event_details);
 
   /**
    * Debug message callback function.
@@ -165,7 +216,7 @@ class EXPORT Debug {
    * \param length length of the message
    * \param client_data the data value passed when registering the message handler
 
-   * A MessageHandler does not take posession of the message string,
+   * A MessageHandler does not take possession of the message string,
    * and must not rely on the data persisting after the handler returns.
    *
    * This message handler is deprecated. Use MessageHandler2 instead.
@@ -177,8 +228,8 @@ class EXPORT Debug {
    * Debug message callback function.
    *
    * \param message the debug message handler message object
-
-   * A MessageHandler does not take posession of the message data,
+   *
+   * A MessageHandler does not take possession of the message data,
    * and must not rely on the data persisting after the handler returns.
    */
   typedef void (*MessageHandler2)(const Message& message);
@@ -196,21 +247,42 @@ class EXPORT Debug {
   // Set a C debug event listener.
   static bool SetDebugEventListener(EventCallback that,
                                     Handle<Value> data = Handle<Value>());
+  static bool SetDebugEventListener2(EventCallback2 that,
+                                     Handle<Value> data = Handle<Value>());
 
   // Set a JavaScript debug event listener.
   static bool SetDebugEventListener(v8::Handle<v8::Object> that,
                                     Handle<Value> data = Handle<Value>());
 
-  // Break execution of JavaScript.
-  static void DebugBreak();
+  // Schedule a debugger break to happen when JavaScript code is run
+  // in the given isolate. If no isolate is provided the default
+  // isolate is used.
+  static void DebugBreak(Isolate* isolate = NULL);
+
+  // Remove scheduled debugger break in given isolate if it has not
+  // happened yet. If no isolate is provided the default isolate is
+  // used.
+  static void CancelDebugBreak(Isolate* isolate = NULL);
+
+  // Break execution of JavaScript in the given isolate (this method
+  // can be invoked from a non-VM thread) for further client command
+  // execution on a VM thread. Client data is then passed in
+  // EventDetails to EventCallback at the moment when the VM actually
+  // stops. If no isolate is provided the default isolate is used.
+  static void DebugBreakForCommand(ClientData* data = NULL,
+                                   Isolate* isolate = NULL);
 
   // Message based interface. The message protocol is JSON. NOTE the message
   // handler thread is not supported any more parameter must be false.
   static void SetMessageHandler(MessageHandler handler,
                                 bool message_handler_thread = false);
   static void SetMessageHandler2(MessageHandler2 handler);
+
+  // If no isolate is provided the default isolate is
+  // used.
   static void SendCommand(const uint16_t* command, int length,
-                          ClientData* client_data = NULL);
+                          ClientData* client_data = NULL,
+                          Isolate* isolate = NULL);
 
   // Dispatch interface.
   static void SetHostDispatchHandler(HostDispatchHandler handler,
@@ -237,9 +309,10 @@ class EXPORT Debug {
   * With this call the debugger is entered and the function specified is called
   * with the execution state as the first argument. This makes it possible to
   * get access to information otherwise not available during normal JavaScript
-  * execution e.g. details on stack frames. The following example show a
-  * JavaScript function which when passed to v8::Debug::Call will return the
-  * current line of JavaScript execution.
+  * execution e.g. details on stack frames. Receiver of the function call will
+  * be the debugger context global object, however this is a subject to change.
+  * The following example shows a JavaScript function which when passed to
+  * v8::Debug::Call will return the current line of JavaScript execution.
   *
   * \code
   *   function frame_source_line(exec_state) {
@@ -267,6 +340,11 @@ class EXPORT Debug {
                           bool wait_for_connection = false);
 
   /**
+    * Disable the V8 builtin debug agent. The TCP/IP connection will be closed.
+    */
+  static void DisableAgent();
+
+  /**
    * Makes V8 process all pending debug messages.
    *
    * From V8 point of view all debug messages come asynchronously (e.g. from
@@ -280,7 +358,7 @@ class EXPORT Debug {
    * 2. V8 is suspended on debug breakpoint; in this state V8 is dedicated
    * to reading and processing debug messages;
    * 3. V8 is not running at all or has called some long-working C++ function;
-   * by default it means that processing of all debug message will be deferred
+   * by default it means that processing of all debug messages will be deferred
    * until V8 gets control again; however, embedding application may improve
    * this by manually calling this method.
    *
@@ -302,6 +380,14 @@ class EXPORT Debug {
    * of this method.
    */
   static void ProcessDebugMessages();
+
+  /**
+   * Debugger is running in its own context which is entered while debugger
+   * messages are being dispatched. This is an explicit getter for this
+   * debugger context. Note that the content of the debugger context is subject
+   * to change.
+   */
+  static Local<Context> GetDebugContext();
 };
 
 

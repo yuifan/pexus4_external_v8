@@ -1,4 +1,4 @@
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2011 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -26,364 +26,61 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdarg.h>
-
-#include "v8.h"
+#include <math.h>
+#include <limits.h>
 
 #include "conversions-inl.h"
-#include "factory.h"
-#include "scanner.h"
+#include "dtoa.h"
+#include "strtod.h"
+#include "utils.h"
 
 namespace v8 {
 namespace internal {
 
-int HexValue(uc32 c) {
-  if ('0' <= c && c <= '9')
-    return c - '0';
-  if ('a' <= c && c <= 'f')
-    return c - 'a' + 10;
-  if ('A' <= c && c <= 'F')
-    return c - 'A' + 10;
-  return -1;
+
+double StringToDouble(UnicodeCache* unicode_cache,
+                      const char* str, int flags, double empty_string_val) {
+  const char* end = str + StrLength(str);
+  return InternalStringToDouble(unicode_cache, str, end, flags,
+                                empty_string_val);
 }
 
 
-// Provide a common interface to getting a character at a certain
-// index from a char* or a String object.
-static inline int GetChar(const char* str, int index) {
-  ASSERT(index >= 0 && index < StrLength(str));
-  return str[index];
+double StringToDouble(UnicodeCache* unicode_cache,
+                      Vector<const char> str,
+                      int flags,
+                      double empty_string_val) {
+  const char* end = str.start() + str.length();
+  return InternalStringToDouble(unicode_cache, str.start(), end, flags,
+                                empty_string_val);
 }
 
-
-static inline int GetChar(String* str, int index) {
-  return str->Get(index);
+double StringToDouble(UnicodeCache* unicode_cache,
+                      Vector<const uc16> str,
+                      int flags,
+                      double empty_string_val) {
+  const uc16* end = str.start() + str.length();
+  return InternalStringToDouble(unicode_cache, str.start(), end, flags,
+                                empty_string_val);
 }
 
-
-static inline int GetLength(const char* str) {
-  return StrLength(str);
-}
-
-
-static inline int GetLength(String* str) {
-  return str->length();
-}
-
-
-static inline const char* GetCString(const char* str, int index) {
-  return str + index;
-}
-
-
-static inline const char* GetCString(String* str, int index) {
-  int length = str->length();
-  char* result = NewArray<char>(length + 1);
-  for (int i = index; i < length; i++) {
-    uc16 c = str->Get(i);
-    if (c <= 127) {
-      result[i - index] = static_cast<char>(c);
-    } else {
-      result[i - index] = 127;  // Force number parsing to fail.
-    }
-  }
-  result[length - index] = '\0';
-  return result;
-}
-
-
-static inline void ReleaseCString(const char* original, const char* str) {
-}
-
-
-static inline void ReleaseCString(String* original, const char* str) {
-  DeleteArray(const_cast<char *>(str));
-}
-
-
-static inline bool IsSpace(const char* str, int index) {
-  ASSERT(index >= 0 && index < StrLength(str));
-  return Scanner::kIsWhiteSpace.get(str[index]);
-}
-
-
-static inline bool IsSpace(String* str, int index) {
-  return Scanner::kIsWhiteSpace.get(str->Get(index));
-}
-
-
-static inline bool SubStringEquals(const char* str,
-                                   int index,
-                                   const char* other) {
-  return strncmp(str + index, other, strlen(other)) != 0;
-}
-
-
-static inline bool SubStringEquals(String* str, int index, const char* other) {
-  HandleScope scope;
-  int str_length = str->length();
-  int other_length = StrLength(other);
-  int end = index + other_length < str_length ?
-            index + other_length :
-            str_length;
-  Handle<String> substring =
-      Factory::NewSubString(Handle<String>(str), index, end);
-  return substring->IsEqualTo(Vector<const char>(other, other_length));
-}
-
-
-// Check if a string should be parsed as an octal number.  The string
-// can be either a char* or a String*.
-template<class S>
-static bool ShouldParseOctal(S* s, int i) {
-  int index = i;
-  int len = GetLength(s);
-  if (index < len && GetChar(s, index) != '0') return false;
-
-  // If the first real character (following '0') is not an octal
-  // digit, bail out early. This also takes care of numbers of the
-  // forms 0.xxx and 0exxx by not allowing the first 0 to be
-  // interpreted as an octal.
-  index++;
-  if (index < len) {
-    int d = GetChar(s, index) - '0';
-    if (d < 0 || d > 7) return false;
-  } else {
-    return false;
-  }
-
-  // Traverse all digits (including the first). If there is an octal
-  // prefix which is not a part of a longer decimal prefix, we return
-  // true. Otherwise, false is returned.
-  while (index < len) {
-    int d = GetChar(s, index++) - '0';
-    if (d == 8 || d == 9) return false;
-    if (d <  0 || d >  7) return true;
-  }
-  return true;
-}
-
-
-extern "C" double gay_strtod(const char* s00, const char** se);
-
-
-// Parse an int from a string starting a given index and in a given
-// radix.  The string can be either a char* or a String*.
-template <class S>
-static int InternalStringToInt(S* s, int i, int radix, double* value) {
-  int len = GetLength(s);
-
-  // Setup limits for computing the value.
-  ASSERT(2 <= radix && radix <= 36);
-  int lim_0 = '0' + (radix < 10 ? radix : 10);
-  int lim_a = 'a' + (radix - 10);
-  int lim_A = 'A' + (radix - 10);
-
-  // NOTE: The code for computing the value may seem a bit complex at
-  // first glance. It is structured to use 32-bit multiply-and-add
-  // loops as long as possible to avoid loosing precision.
-
-  double v = 0.0;
-  int j;
-  for (j = i; j < len;) {
-    // Parse the longest part of the string starting at index j
-    // possible while keeping the multiplier, and thus the part
-    // itself, within 32 bits.
-    uint32_t part = 0, multiplier = 1;
-    int k;
-    for (k = j; k < len; k++) {
-      int c = GetChar(s, k);
-      if (c >= '0' && c < lim_0) {
-        c = c - '0';
-      } else if (c >= 'a' && c < lim_a) {
-        c = c - 'a' + 10;
-      } else if (c >= 'A' && c < lim_A) {
-        c = c - 'A' + 10;
-      } else {
-        break;
-      }
-
-      // Update the value of the part as long as the multiplier fits
-      // in 32 bits. When we can't guarantee that the next iteration
-      // will not overflow the multiplier, we stop parsing the part
-      // by leaving the loop.
-      static const uint32_t kMaximumMultiplier = 0xffffffffU / 36;
-      uint32_t m = multiplier * radix;
-      if (m > kMaximumMultiplier) break;
-      part = part * radix + c;
-      multiplier = m;
-      ASSERT(multiplier > part);
-    }
-
-    // Compute the number of part digits. If no digits were parsed;
-    // we're done parsing the entire string.
-    int digits = k - j;
-    if (digits == 0) break;
-
-    // Update the value and skip the part in the string.
-    ASSERT(multiplier ==
-           pow(static_cast<double>(radix), static_cast<double>(digits)));
-    v = v * multiplier + part;
-    j = k;
-  }
-
-  // If the resulting value is larger than 2^53 the value does not fit
-  // in the mantissa of the double and there is a loss of precision.
-  // When the value is larger than 2^53 the rounding depends on the
-  // code generation.  If the code generator spills the double value
-  // it uses 64 bits and if it does not it uses 80 bits.
-  //
-  // If there is a potential for overflow we resort to strtod for
-  // radix 10 numbers to get higher precision.  For numbers in another
-  // radix we live with the loss of precision.
-  static const double kPreciseConversionLimit = 9007199254740992.0;
-  if (radix == 10 && v > kPreciseConversionLimit) {
-    const char* cstr = GetCString(s, i);
-    const char* end;
-    v = gay_strtod(cstr, &end);
-    ReleaseCString(s, cstr);
-  }
-
-  *value = v;
-  return j;
-}
-
-
-int StringToInt(String* str, int index, int radix, double* value) {
-  return InternalStringToInt(str, index, radix, value);
-}
-
-
-int StringToInt(const char* str, int index, int radix, double* value) {
-  return InternalStringToInt(const_cast<char*>(str), index, radix, value);
-}
-
-
-static const double JUNK_STRING_VALUE = OS::nan_value();
-
-
-// Convert a string to a double value.  The string can be either a
-// char* or a String*.
-template<class S>
-static double InternalStringToDouble(S* str,
-                                     int flags,
-                                     double empty_string_val) {
-  double result = 0.0;
-  int index = 0;
-
-  int len = GetLength(str);
-
-  // Skip leading spaces.
-  while ((index < len) && IsSpace(str, index)) index++;
-
-  // Is the string empty?
-  if (index >= len) return empty_string_val;
-
-  // Get the first character.
-  uint16_t first = GetChar(str, index);
-
-  // Numbers can only start with '-', '+', '.', 'I' (Infinity), or a digit.
-  if (first != '-' && first != '+' && first != '.' && first != 'I' &&
-      (first > '9' || first < '0')) {
-    return JUNK_STRING_VALUE;
-  }
-
-  // Compute sign of result based on first character.
-  int sign = 1;
-  if (first == '-') {
-    sign = -1;
-    index++;
-    // String only containing a '-' are junk chars.
-    if (index == len) return JUNK_STRING_VALUE;
-  }
-
-  // do we have a hex number?
-  // (since the string is 0-terminated, it's ok to look one char beyond the end)
-  if ((flags & ALLOW_HEX) != 0 &&
-      (index + 1) < len &&
-      GetChar(str, index) == '0' &&
-      (GetChar(str, index + 1) == 'x' || GetChar(str, index + 1) == 'X')) {
-    index += 2;
-    index = StringToInt(str, index, 16, &result);
-  } else if ((flags & ALLOW_OCTALS) != 0 && ShouldParseOctal(str, index)) {
-    // NOTE: We optimistically try to parse the number as an octal (if
-    // we're allowed to), even though this is not as dictated by
-    // ECMA-262. The reason for doing this is compatibility with IE and
-    // Firefox.
-    index = StringToInt(str, index, 8, &result);
-  } else {
-    const char* cstr = GetCString(str, index);
-    const char* end;
-    // Optimistically parse the number and then, if that fails,
-    // check if it might have been {+,-,}Infinity.
-    result = gay_strtod(cstr, &end);
-    ReleaseCString(str, cstr);
-    if (result != 0.0 || end != cstr) {
-      // It appears that strtod worked
-      index += static_cast<int>(end - cstr);
-    } else {
-      // Check for {+,-,}Infinity
-      bool is_negative = (GetChar(str, index) == '-');
-      if (GetChar(str, index) == '+' || GetChar(str, index) == '-')
-        index++;
-      if (!SubStringEquals(str, index, "Infinity"))
-        return JUNK_STRING_VALUE;
-      result = is_negative ? -V8_INFINITY : V8_INFINITY;
-      index += 8;
-    }
-  }
-
-  if ((flags & ALLOW_TRAILING_JUNK) == 0) {
-    // skip trailing spaces
-    while ((index < len) && IsSpace(str, index)) index++;
-    // string ending with junk?
-    if (index < len) return JUNK_STRING_VALUE;
-  }
-
-  return sign * result;
-}
-
-
-double StringToDouble(String* str, int flags, double empty_string_val) {
-  return InternalStringToDouble(str, flags, empty_string_val);
-}
-
-
-double StringToDouble(const char* str, int flags, double empty_string_val) {
-  return InternalStringToDouble(str, flags, empty_string_val);
-}
-
-
-extern "C" char* dtoa(double d, int mode, int ndigits,
-                      int* decpt, int* sign, char** rve);
-
-extern "C" void freedtoa(char* s);
 
 const char* DoubleToCString(double v, Vector<char> buffer) {
-  StringBuilder builder(buffer.start(), buffer.length());
-
   switch (fpclassify(v)) {
-    case FP_NAN:
-      builder.AddString("NaN");
-      break;
-
-    case FP_INFINITE:
-      if (v < 0.0) {
-        builder.AddString("-Infinity");
-      } else {
-        builder.AddString("Infinity");
-      }
-      break;
-
-    case FP_ZERO:
-      builder.AddCharacter('0');
-      break;
-
+    case FP_NAN: return "NaN";
+    case FP_INFINITE: return (v < 0.0 ? "-Infinity" : "Infinity");
+    case FP_ZERO: return "0";
     default: {
+      SimpleStringBuilder builder(buffer.start(), buffer.length());
       int decimal_point;
       int sign;
+      const int kV8DtoaBufferCapacity = kBase10MaximalLength + 1;
+      char decimal_rep[kV8DtoaBufferCapacity];
+      int length;
 
-      char* decimal_rep = dtoa(v, 0, 0, &decimal_point, &sign, NULL);
-      int length = StrLength(decimal_rep);
+      DoubleToAscii(v, DTOA_SHORTEST, 0,
+                    Vector<char>(decimal_rep, kV8DtoaBufferCapacity),
+                    &sign, &length, &decimal_point);
 
       if (sign) builder.AddCharacter('-');
 
@@ -415,13 +112,11 @@ const char* DoubleToCString(double v, Vector<char> buffer) {
         builder.AddCharacter((decimal_point >= 0) ? '+' : '-');
         int exponent = decimal_point - 1;
         if (exponent < 0) exponent = -exponent;
-        builder.AddFormatted("%d", exponent);
+        builder.AddDecimalInteger(exponent);
       }
-
-      freedtoa(decimal_rep);
+    return builder.Finalize();
     }
   }
-  return builder.Finalize();
 }
 
 
@@ -446,7 +141,11 @@ const char* IntToCString(int n, Vector<char> buffer) {
 
 
 char* DoubleToFixedCString(double value, int f) {
+  const int kMaxDigitsBeforePoint = 21;
+  const double kFirstNonFixed = 1e21;
+  const int kMaxDigitsAfterPoint = 20;
   ASSERT(f >= 0);
+  ASSERT(f <= kMaxDigitsAfterPoint);
 
   bool negative = false;
   double abs_value = value;
@@ -455,7 +154,9 @@ char* DoubleToFixedCString(double value, int f) {
     negative = true;
   }
 
-  if (abs_value >= 1e21) {
+  // If abs_value has more than kMaxDigitsBeforePoint digits before the point
+  // use the non-fixed conversion routine.
+  if (abs_value >= kFirstNonFixed) {
     char arr[100];
     Vector<char> buffer(arr, ARRAY_SIZE(arr));
     return StrDup(DoubleToCString(value, buffer));
@@ -464,8 +165,14 @@ char* DoubleToFixedCString(double value, int f) {
   // Find a sufficiently precise decimal representation of n.
   int decimal_point;
   int sign;
-  char* decimal_rep = dtoa(abs_value, 3, f, &decimal_point, &sign, NULL);
-  int decimal_rep_length = StrLength(decimal_rep);
+  // Add space for the '\0' byte.
+  const int kDecimalRepCapacity =
+      kMaxDigitsBeforePoint + kMaxDigitsAfterPoint + 1;
+  char decimal_rep[kDecimalRepCapacity];
+  int decimal_rep_length;
+  DoubleToAscii(value, DTOA_FIXED, f,
+                Vector<char>(decimal_rep, kDecimalRepCapacity),
+                &sign, &decimal_rep_length, &decimal_point);
 
   // Create a representation that is padded with zeros if needed.
   int zero_prefix_length = 0;
@@ -483,17 +190,16 @@ char* DoubleToFixedCString(double value, int f) {
 
   unsigned rep_length =
       zero_prefix_length + decimal_rep_length + zero_postfix_length;
-  StringBuilder rep_builder(rep_length + 1);
+  SimpleStringBuilder rep_builder(rep_length + 1);
   rep_builder.AddPadding('0', zero_prefix_length);
   rep_builder.AddString(decimal_rep);
   rep_builder.AddPadding('0', zero_postfix_length);
   char* rep = rep_builder.Finalize();
-  freedtoa(decimal_rep);
 
   // Create the result string by appending a minus and putting in a
   // decimal point if needed.
   unsigned result_size = decimal_point + f + 2;
-  StringBuilder builder(result_size + 1);
+  SimpleStringBuilder builder(result_size + 1);
   if (negative) builder.AddCharacter('-');
   builder.AddSubstring(rep, decimal_point);
   if (f > 0) {
@@ -519,7 +225,7 @@ static char* CreateExponentialRepresentation(char* decimal_rep,
   // letter 'e', a minus or a plus depending on the exponent, and a
   // three digit exponent.
   unsigned result_size = significant_digits + 7;
-  StringBuilder builder(result_size + 1);
+  SimpleStringBuilder builder(result_size + 1);
 
   if (negative) builder.AddCharacter('-');
   builder.AddCharacter(decimal_rep[0]);
@@ -532,15 +238,16 @@ static char* CreateExponentialRepresentation(char* decimal_rep,
 
   builder.AddCharacter('e');
   builder.AddCharacter(negative_exponent ? '-' : '+');
-  builder.AddFormatted("%d", exponent);
+  builder.AddDecimalInteger(exponent);
   return builder.Finalize();
 }
 
 
 
 char* DoubleToExponentialCString(double value, int f) {
+  const int kMaxDigitsAfterPoint = 20;
   // f might be -1 to signal that f was undefined in JavaScript.
-  ASSERT(f >= -1 && f <= 20);
+  ASSERT(f >= -1 && f <= kMaxDigitsAfterPoint);
 
   bool negative = false;
   if (value < 0) {
@@ -551,30 +258,42 @@ char* DoubleToExponentialCString(double value, int f) {
   // Find a sufficiently precise decimal representation of n.
   int decimal_point;
   int sign;
-  char* decimal_rep = NULL;
+  // f corresponds to the digits after the point. There is always one digit
+  // before the point. The number of requested_digits equals hence f + 1.
+  // And we have to add one character for the null-terminator.
+  const int kV8DtoaBufferCapacity = kMaxDigitsAfterPoint + 1 + 1;
+  // Make sure that the buffer is big enough, even if we fall back to the
+  // shortest representation (which happens when f equals -1).
+  ASSERT(kBase10MaximalLength <= kMaxDigitsAfterPoint + 1);
+  char decimal_rep[kV8DtoaBufferCapacity];
+  int decimal_rep_length;
+
   if (f == -1) {
-    decimal_rep = dtoa(value, 0, 0, &decimal_point, &sign, NULL);
-    f = StrLength(decimal_rep) - 1;
+    DoubleToAscii(value, DTOA_SHORTEST, 0,
+                  Vector<char>(decimal_rep, kV8DtoaBufferCapacity),
+                  &sign, &decimal_rep_length, &decimal_point);
+    f = decimal_rep_length - 1;
   } else {
-    decimal_rep = dtoa(value, 2, f + 1, &decimal_point, &sign, NULL);
+    DoubleToAscii(value, DTOA_PRECISION, f + 1,
+                  Vector<char>(decimal_rep, kV8DtoaBufferCapacity),
+                  &sign, &decimal_rep_length, &decimal_point);
   }
-  int decimal_rep_length = StrLength(decimal_rep);
   ASSERT(decimal_rep_length > 0);
   ASSERT(decimal_rep_length <= f + 1);
-  USE(decimal_rep_length);
 
   int exponent = decimal_point - 1;
   char* result =
       CreateExponentialRepresentation(decimal_rep, exponent, negative, f+1);
-
-  freedtoa(decimal_rep);
 
   return result;
 }
 
 
 char* DoubleToPrecisionCString(double value, int p) {
-  ASSERT(p >= 1 && p <= 21);
+  const int kMinimalDigits = 1;
+  const int kMaximalDigits = 21;
+  ASSERT(p >= kMinimalDigits && p <= kMaximalDigits);
+  USE(kMinimalDigits);
 
   bool negative = false;
   if (value < 0) {
@@ -585,8 +304,14 @@ char* DoubleToPrecisionCString(double value, int p) {
   // Find a sufficiently precise decimal representation of n.
   int decimal_point;
   int sign;
-  char* decimal_rep = dtoa(value, 2, p, &decimal_point, &sign, NULL);
-  int decimal_rep_length = StrLength(decimal_rep);
+  // Add one for the terminating null character.
+  const int kV8DtoaBufferCapacity = kMaximalDigits + 1;
+  char decimal_rep[kV8DtoaBufferCapacity];
+  int decimal_rep_length;
+
+  DoubleToAscii(value, DTOA_PRECISION, p,
+                Vector<char>(decimal_rep, kV8DtoaBufferCapacity),
+                &sign, &decimal_rep_length, &decimal_point);
   ASSERT(decimal_rep_length <= p);
 
   int exponent = decimal_point - 1;
@@ -605,7 +330,7 @@ char* DoubleToPrecisionCString(double value, int p) {
     unsigned result_size = (decimal_point <= 0)
         ? -decimal_point + p + 3
         : p + 2;
-    StringBuilder builder(result_size + 1);
+    SimpleStringBuilder builder(result_size + 1);
     if (negative) builder.AddCharacter('-');
     if (decimal_point <= 0) {
       builder.AddString("0.");
@@ -630,7 +355,6 @@ char* DoubleToPrecisionCString(double value, int p) {
     result = builder.Finalize();
   }
 
-  freedtoa(decimal_rep);
   return result;
 }
 
@@ -665,7 +389,7 @@ char* DoubleToRadixCString(double value, int radix) {
   int integer_pos = kBufferSize - 2;
   do {
     integer_buffer[integer_pos--] =
-        chars[static_cast<int>(modulo(integer_part, radix))];
+        chars[static_cast<int>(fmod(integer_part, radix))];
     integer_part /= radix;
   } while (integer_part >= 1.0);
   // Sanity check.
@@ -698,12 +422,11 @@ char* DoubleToRadixCString(double value, int radix) {
   // If the number has a decimal part, leave room for the period.
   if (decimal_pos > 0) result_size++;
   // Allocate result and fill in the parts.
-  StringBuilder builder(result_size + 1);
+  SimpleStringBuilder builder(result_size + 1);
   builder.AddSubstring(integer_buffer + integer_pos + 1, integer_part_size);
   if (decimal_pos > 0) builder.AddCharacter('.');
   builder.AddSubstring(decimal_buffer, decimal_pos);
   return builder.Finalize();
 }
-
 
 } }  // namespace v8::internal

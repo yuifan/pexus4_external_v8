@@ -1,4 +1,4 @@
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -36,31 +36,6 @@ enum InvokeFlag {
 };
 
 
-enum CodeLocation {
-  IN_JAVASCRIPT,
-  IN_JS_ENTRY,
-  IN_C_ENTRY
-};
-
-
-enum HandlerType {
-  TRY_CATCH_HANDLER,
-  TRY_FINALLY_HANDLER,
-  JS_ENTRY_HANDLER
-};
-
-
-// Flags used for the AllocateInNewSpace functions.
-enum AllocationFlags {
-  // No special flags.
-  NO_ALLOCATION_FLAGS = 0,
-  // Return the pointer to the allocated already tagged as a heap object.
-  TAG_OBJECT = 1 << 0,
-  // The content of the result register already contains the allocation top in
-  // new space.
-  RESULT_CONTAINS_TOP = 1 << 1
-};
-
 // Invalid depth in prototype chain.
 const int kInvalidProtoDepth = -1;
 
@@ -79,13 +54,8 @@ const int kInvalidProtoDepth = -1;
 #elif V8_TARGET_ARCH_ARM
 #include "arm/constants-arm.h"
 #include "assembler.h"
-#ifdef V8_ARM_VARIANT_THUMB
-#include "arm/assembler-thumb2.h"
-#include "arm/assembler-thumb2-inl.h"
-#else
 #include "arm/assembler-arm.h"
 #include "arm/assembler-arm-inl.h"
-#endif
 #include "code.h"  // must be after assembler_*.h
 #include "arm/macro-assembler-arm.h"
 #elif V8_TARGET_ARCH_MIPS
@@ -98,5 +68,89 @@ const int kInvalidProtoDepth = -1;
 #else
 #error Unsupported target architecture.
 #endif
+
+namespace v8 {
+namespace internal {
+
+class FrameScope {
+ public:
+  explicit FrameScope(MacroAssembler* masm, StackFrame::Type type)
+      : masm_(masm), type_(type), old_has_frame_(masm->has_frame()) {
+    masm->set_has_frame(true);
+    if (type != StackFrame::MANUAL && type_ != StackFrame::NONE) {
+      masm->EnterFrame(type);
+    }
+  }
+
+  ~FrameScope() {
+    if (type_ != StackFrame::MANUAL && type_ != StackFrame::NONE) {
+      masm_->LeaveFrame(type_);
+    }
+    masm_->set_has_frame(old_has_frame_);
+  }
+
+  // Normally we generate the leave-frame code when this object goes
+  // out of scope.  Sometimes we may need to generate the code somewhere else
+  // in addition.  Calling this will achieve that, but the object stays in
+  // scope, the MacroAssembler is still marked as being in a frame scope, and
+  // the code will be generated again when it goes out of scope.
+  void GenerateLeaveFrame() {
+    masm_->LeaveFrame(type_);
+  }
+
+ private:
+  MacroAssembler* masm_;
+  StackFrame::Type type_;
+  bool old_has_frame_;
+};
+
+
+class AllowExternalCallThatCantCauseGC: public FrameScope {
+ public:
+  explicit AllowExternalCallThatCantCauseGC(MacroAssembler* masm)
+      : FrameScope(masm, StackFrame::NONE) { }
+};
+
+
+class NoCurrentFrameScope {
+ public:
+  explicit NoCurrentFrameScope(MacroAssembler* masm)
+      : masm_(masm), saved_(masm->has_frame()) {
+    masm->set_has_frame(false);
+  }
+
+  ~NoCurrentFrameScope() {
+    masm_->set_has_frame(saved_);
+  }
+
+ private:
+  MacroAssembler* masm_;
+  bool saved_;
+};
+
+
+// Support for "structured" code comments.
+#ifdef DEBUG
+
+class Comment {
+ public:
+  Comment(MacroAssembler* masm, const char* msg);
+  ~Comment();
+
+ private:
+  MacroAssembler* masm_;
+  const char* msg_;
+};
+
+#else
+
+class Comment {
+ public:
+  Comment(MacroAssembler*, const char*)  {}
+};
+
+#endif  // DEBUG
+
+} }  // namespace v8::internal
 
 #endif  // V8_MACRO_ASSEMBLER_H_

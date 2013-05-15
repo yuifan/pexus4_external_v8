@@ -57,9 +57,8 @@ TEST_DIRS = """
 class MozillaTestCase(test.TestCase):
 
   def __init__(self, filename, path, context, root, mode, framework):
-    super(MozillaTestCase, self).__init__(context, path)
+    super(MozillaTestCase, self).__init__(context, path, mode)
     self.filename = filename
-    self.mode = mode
     self.framework = framework
     self.root = root
 
@@ -75,8 +74,8 @@ class MozillaTestCase(test.TestCase):
     return 'FAILED!' in output.stdout
 
   def GetCommand(self):
-    result = [self.context.GetVm(self.mode), '--expose-gc',
-              join(self.root, 'mozilla-shell-emulation.js')]
+    result = self.context.GetVmCommand(self, self.mode) + \
+       [ '--expose-gc', join(self.root, 'mozilla-shell-emulation.js') ]
     result += self.framework
     result.append(self.filename)
     return result
@@ -93,7 +92,7 @@ class MozillaTestConfiguration(test.TestConfiguration):
   def __init__(self, context, root):
     super(MozillaTestConfiguration, self).__init__(context, root)
 
-  def ListTests(self, current_path, path, mode):
+  def ListTests(self, current_path, path, mode, variant_flags):
     tests = []
     for test_dir in TEST_DIRS:
       current_root = join(self.root, 'data', test_dir)
@@ -126,7 +125,7 @@ class MozillaTestConfiguration(test.TestConfiguration):
     return tests
 
   def GetBuildRequirements(self):
-    return ['sample', 'sample=shell']
+    return ['d8']
 
   def GetTestStatus(self, sections, defs):
     status_file = join(self.root, 'mozilla.status')

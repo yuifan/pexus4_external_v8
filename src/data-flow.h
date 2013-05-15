@@ -1,4 +1,4 @@
-// Copyright 2010 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -28,88 +28,176 @@
 #ifndef V8_DATAFLOW_H_
 #define V8_DATAFLOW_H_
 
+#include "v8.h"
+
+#include "allocation.h"
 #include "ast.h"
 #include "compiler.h"
+#include "zone-inl.h"
 
 namespace v8 {
 namespace internal {
 
-// This class is used to number all expressions in the AST according to
-// their evaluation order (post-order left-to-right traversal).
-class AstLabeler: public AstVisitor {
+class BitVector: public ZoneObject {
  public:
-  AstLabeler() : next_number_(0) {}
+  // Iterator for the elements of this BitVector.
+  class Iterator BASE_EMBEDDED {
+   public:
+    explicit Iterator(BitVector* target)
+        : target_(target),
+          current_index_(0),
+          current_value_(target->data_[0]),
+          current_(-1) {
+      ASSERT(target->data_length_ > 0);
+      Advance();
+    }
+    ~Iterator() { }
 
-  void Label(CompilationInfo* info);
+    bool Done() const { return current_index_ >= target_->data_length_; }
+    void Advance();
+
+    int Current() const {
+      ASSERT(!Done());
+      return current_;
+    }
+
+   private:
+    uint32_t SkipZeroBytes(uint32_t val) {
+      while ((val & 0xFF) == 0) {
+        val >>= 8;
+        current_ += 8;
+      }
+      return val;
+    }
+    uint32_t SkipZeroBits(uint32_t val) {
+      while ((val & 0x1) == 0) {
+        val >>= 1;
+        current_++;
+      }
+      return val;
+    }
+
+    BitVector* target_;
+    int current_index_;
+    uint32_t current_value_;
+    int current_;
+
+    friend class BitVector;
+  };
+
+  BitVector(int length, Zone* zone)
+      : length_(length),
+        data_length_(SizeFor(length)),
+        data_(zone->NewArray<uint32_t>(data_length_)) {
+    ASSERT(length > 0);
+    Clear();
+  }
+
+  BitVector(const BitVector& other, Zone* zone)
+      : length_(other.length()),
+        data_length_(SizeFor(length_)),
+        data_(zone->NewArray<uint32_t>(data_length_)) {
+    CopyFrom(other);
+  }
+
+  static int SizeFor(int length) {
+    return 1 + ((length - 1) / 32);
+  }
+
+  BitVector& operator=(const BitVector& rhs) {
+    if (this != &rhs) CopyFrom(rhs);
+    return *this;
+  }
+
+  void CopyFrom(const BitVector& other) {
+    ASSERT(other.length() <= length());
+    for (int i = 0; i < other.data_length_; i++) {
+      data_[i] = other.data_[i];
+    }
+    for (int i = other.data_length_; i < data_length_; i++) {
+      data_[i] = 0;
+    }
+  }
+
+  bool Contains(int i) const {
+    ASSERT(i >= 0 && i < length());
+    uint32_t block = data_[i / 32];
+    return (block & (1U << (i % 32))) != 0;
+  }
+
+  void Add(int i) {
+    ASSERT(i >= 0 && i < length());
+    data_[i / 32] |= (1U << (i % 32));
+  }
+
+  void Remove(int i) {
+    ASSERT(i >= 0 && i < length());
+    data_[i / 32] &= ~(1U << (i % 32));
+  }
+
+  void Union(const BitVector& other) {
+    ASSERT(other.length() == length());
+    for (int i = 0; i < data_length_; i++) {
+      data_[i] |= other.data_[i];
+    }
+  }
+
+  bool UnionIsChanged(const BitVector& other) {
+    ASSERT(other.length() == length());
+    bool changed = false;
+    for (int i = 0; i < data_length_; i++) {
+      uint32_t old_data = data_[i];
+      data_[i] |= other.data_[i];
+      if (data_[i] != old_data) changed = true;
+    }
+    return changed;
+  }
+
+  void Intersect(const BitVector& other) {
+    ASSERT(other.length() == length());
+    for (int i = 0; i < data_length_; i++) {
+      data_[i] &= other.data_[i];
+    }
+  }
+
+  void Subtract(const BitVector& other) {
+    ASSERT(other.length() == length());
+    for (int i = 0; i < data_length_; i++) {
+      data_[i] &= ~other.data_[i];
+    }
+  }
+
+  void Clear() {
+    for (int i = 0; i < data_length_; i++) {
+      data_[i] = 0;
+    }
+  }
+
+  bool IsEmpty() const {
+    for (int i = 0; i < data_length_; i++) {
+      if (data_[i] != 0) return false;
+    }
+    return true;
+  }
+
+  bool Equals(const BitVector& other) {
+    for (int i = 0; i < data_length_; i++) {
+      if (data_[i] != other.data_[i]) return false;
+    }
+    return true;
+  }
+
+  int length() const { return length_; }
+
+#ifdef DEBUG
+  void Print();
+#endif
 
  private:
-  CompilationInfo* info() { return info_; }
-
-  void VisitDeclarations(ZoneList<Declaration*>* decls);
-  void VisitStatements(ZoneList<Statement*>* stmts);
-
-  // AST node visit functions.
-#define DECLARE_VISIT(type) virtual void Visit##type(type* node);
-  AST_NODE_LIST(DECLARE_VISIT)
-#undef DECLARE_VISIT
-
-  // Traversal number for labelling AST nodes.
-  int next_number_;
-
-  CompilationInfo* info_;
-
-  DISALLOW_COPY_AND_ASSIGN(AstLabeler);
+  int length_;
+  int data_length_;
+  uint32_t* data_;
 };
-
-
-class VarUseMap : public HashMap {
- public:
-  VarUseMap() : HashMap(VarMatch) {}
-
-  ZoneList<Expression*>* Lookup(Variable* var);
-
- private:
-  static bool VarMatch(void* key1, void* key2) { return key1 == key2; }
-};
-
-
-class DefinitionInfo : public ZoneObject {
- public:
-  explicit DefinitionInfo() : last_use_(NULL) {}
-
-  Expression* last_use() { return last_use_; }
-  void set_last_use(Expression* expr) { last_use_ = expr; }
-
- private:
-  Expression* last_use_;
-  Register location_;
-};
-
-
-class LivenessAnalyzer : public AstVisitor {
- public:
-  LivenessAnalyzer() {}
-
-  void Analyze(FunctionLiteral* fun);
-
- private:
-  void VisitStatements(ZoneList<Statement*>* stmts);
-
-  void RecordUse(Variable* var, Expression* expr);
-  void RecordDef(Variable* var, Expression* expr);
-
-
-  // AST node visit functions.
-#define DECLARE_VISIT(type) virtual void Visit##type(type* node);
-  AST_NODE_LIST(DECLARE_VISIT)
-#undef DECLARE_VISIT
-
-  // Map for tracking the live variables.
-  VarUseMap live_vars_;
-
-  DISALLOW_COPY_AND_ASSIGN(LivenessAnalyzer);
-};
-
 
 } }  // namespace v8::internal
 
